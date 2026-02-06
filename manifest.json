@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "titles": [
+    {
+      "id": "26",
+      "name": "Internal Revenue Code",
+      "description": "U.S. Federal Tax Code",
+      "timeScopes": [
+        "2015",
+        "2016",
+        "2017",
+        "2018",
+        "2019",
+        "2020",
+        "2021",
+        "2022",
+        "2023",
+        "2024",
+        "2025"
+      ],
+      "timeScopeType": "year"
+    }
+  ]
+}
