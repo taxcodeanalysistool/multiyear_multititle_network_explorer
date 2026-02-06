@@ -11,6 +11,7 @@ import type {
   TimeScope,
 } from '../types';
 import { fetchActorCounts, fetchNodeDetails } from '../api';
+import { forwardRef, useImperativeHandle } from 'react';
 
 interface NetworkGraphProps {
   relationships?: Relationship[];
@@ -40,14 +41,19 @@ function baseColorForType(t?: NodeType): string {
   }
 }
 
-export default function NetworkGraph({
-  relationships,
-  graphData: externalGraphData,
-  selectedNode,
-  onNodeClick,
-  actorTotalCounts,
-  timeScope,
-}: NetworkGraphProps) {
+const NetworkGraph = forwardRef<
+  { getSvgElement: () => SVGSVGElement | null },
+  NetworkGraphProps
+>((props, ref) => {
+  // Destructure props inside the component body
+  const {
+    relationships,
+    graphData: externalGraphData,
+    selectedNode,
+    onNodeClick,
+    actorTotalCounts,
+    timeScope,
+  } = props;
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -61,6 +67,10 @@ export default function NetworkGraph({
 
   const transformRef = useRef<d3.ZoomTransform | null>(null);
   const hasInitializedRef = useRef(false);
+
+  useImperativeHandle(ref, () => ({
+    getSvgElement: () => svgRef.current,
+  }));
 
   const [onDemandCounts, setOnDemandCounts] = useState<Record<string, number>>({});
   const [displayLabels, setDisplayLabels] = useState<Record<string, string>>({});
@@ -399,7 +409,7 @@ export default function NetworkGraph({
       .attr('y', (d) => radiusScale(d.val ?? 1) * 1.5)
       .attr('text-anchor', 'middle')
       .attr('fill', '#fff')
-      .attr('font-size', (d) => (d.id === selectedNodeId ? '6px' : '5px'))
+      .attr('font-size', (d) => (d.id === selectedNodeId ? '20px' : '8px'))
       .attr('font-weight', (d) => (d.id === selectedNodeId ? 'bold' : 'normal'))
       .style('pointer-events', 'none')
       .style('user-select', 'none');
@@ -515,7 +525,7 @@ export default function NetworkGraph({
       nodeGroupRef.current
         .selectAll('text')
         .attr('font-weight', (d: any) => (d.id === selectedNodeId ? 'bold' : 'normal'))
-        .attr('font-size', (d: any) => (d.id === selectedNodeId ? '6px' : '5px'));
+        .attr('font-size', (d: any) => (d.id === selectedNodeId ? '20px' : '8px'));
 
       linkGroupRef.current
         .attr('stroke', (d: any) => {
@@ -545,24 +555,15 @@ export default function NetworkGraph({
     });
   }, [selectedNodeId, graphData]); // ← ADD graphData to dependencies
 
-
-  return (
+return (
     <div className="relative w-full h-full">
       <svg ref={svgRef} className="w-full h-full bg-gray-900" />
-
+      
       {/* Top-left timeScope label */}
-<div className="absolute top-4 left-4 bg-gray-800/90 px-3 py-2 rounded-lg border border-gray-700 shadow-lg text-center">
-  <div className="text-xs text-gray-400">Time Scope</div>
-  <div className="text-lg font-semibold text-blue-400">{timeScope}</div>
-</div>
-
-<div className="absolute bottom-0 left-0 right-0 bg-gray-800 px-4 py-2 text-xs text-gray-400 text-center border-t border-gray-700">
-  <span>Click nodes to explore relationships</span>
-  <span className="mx-3">•</span>
-  <span>Scroll to zoom</span>
-  <span className="mx-3">•</span>
-  <span>Drag to pan</span>
-</div>
+      <div className="absolute top-4 left-4 bg-gray-800/90 px-3 py-2 rounded-lg border border-gray-700 shadow-lg text-center">
+        <div className="text-xs text-gray-400">Time Scope</div>
+        <div className="text-lg font-semibold text-blue-400">{timeScope}</div>
+      </div>
 
       <div className="absolute bottom-0 left-0 right-0 bg-gray-800 px-4 py-2 text-xs text-gray-400 text-center border-t border-gray-700">
         <span>Click nodes to explore relationships</span>
@@ -573,4 +574,9 @@ export default function NetworkGraph({
       </div>
     </div>
   );
-}
+});
+  
+
+NetworkGraph.displayName = 'NetworkGraph';
+
+export default NetworkGraph;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { searchActors, fetchNodeDetails } from '../api';
+import ExportControls from './ExportControls';
 import type { 
   Stats, 
   Actor, 
@@ -33,12 +34,15 @@ interface SidebarProps {
   includeUndated: boolean;
   onIncludeUndatedChange: (include: boolean) => void;
   keywords: string;
+  bottomUpSearchKeywords?: string; 
   onKeywordsChange: (keywords: string) => void;
   buildMode: 'topDown' | 'bottomUp';
   onStartNewNetwork?: () => void;
   onResetToTopDown?: () => void;
   timeScope: TimeScope;
   onTimeScopeChange: (scope: TimeScope) => void;
+  currentGraphData?: { nodes: GraphNode[]; links: GraphLink[] } | null;
+  networkGraphRef?: React.RefObject<{ getSvgElement: () => SVGSVGElement | null }>;
   
   // ==============================
   // NEW: Multi-title props
@@ -164,6 +168,8 @@ export default function Sidebar({
   buildMode,
   timeScope,
   onTimeScopeChange,
+  keywords,
+  bottomUpSearchKeywords,
   
   // New multi-title props
   manifest,
@@ -173,7 +179,9 @@ export default function Sidebar({
   
   onBottomUpSearch,
   displayGraphInfo,
-  topDownGraphInfo
+  topDownGraphInfo,
+  currentGraphData,
+  networkGraphRef,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Actor[]>([]);
@@ -587,6 +595,22 @@ export default function Sidebar({
             </>
           )}
         </div>
+
+{/* Export Section */}
+<div className="border-t border-gray-700 pt-4 px-2">
+  <ExportControls
+    graphData={currentGraphData}
+    buildMode={buildMode}
+    timeScope={timeScope}
+    selectedTitle={selectedTitle}
+    selectedNode={selectedNode}
+    filterTypes={Array.from(enabledNodeTypes)}
+    searchTerm={buildMode === 'bottomUp' ? (bottomUpSearchKeywords || '') : keywords}
+    svgElement={networkGraphRef?.current?.getSvgElement() || null}
+    displayGraphInfo={displayGraphInfo || topDownGraphInfo}
+  />
+</div>
+
 
         {/* Node filters */}
         {stats && (

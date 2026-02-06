@@ -36,6 +36,7 @@ function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [availableTimeScopes, setAvailableTimeScopes] = useState<string[]>([]);
   const [isLoadingNodeRelationships, setIsLoadingNodeRelationships] = useState(false);
+  const networkGraphRef = useRef<{ getSvgElement: () => SVGSVGElement | null }>(null);
   
   const [openDocId, setOpenDocId] = useState<string | null>(null);
   const [fullGraph, setFullGraph] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({
@@ -1021,6 +1022,62 @@ const loadNodeRelationships = async () => {
     setActorRelationships([]);
   }, []);
 
+  // Add this before the return statement
+  const currentGraphData = useMemo(() => {
+    if (buildMode === 'bottomUp') {
+      return filteredDisplayGraph;
+    } else if (buildMode === 'topDown' && relationships) {
+      // Convert relationships to graph format
+      const nodeMap = new Map<string, GraphNode>();
+      const links: GraphLink[] = [];
+
+      relationships.forEach((rel) => {
+        const sourceId = rel.actor_id ?? rel.actor;
+        const targetId = rel.target_id ?? rel.target;
+
+        if (!nodeMap.has(sourceId)) {
+          nodeMap.set(sourceId, {
+            id: sourceId,
+            name: rel.actor,
+            node_type: rel.actor_type!,
+            val: 1,
+            time: timeScope,
+            usc_title: selectedTitle,
+          } as GraphNode);
+        }
+
+        if (!nodeMap.has(targetId)) {
+          nodeMap.set(targetId, {
+            id: targetId,
+            name: rel.target,
+            node_type: rel.target_type!,
+            val: 1,
+            time: timeScope,
+            usc_title: selectedTitle,
+          } as GraphNode);
+        }
+
+        links.push({
+          source: sourceId,
+          target: targetId,
+          action: rel.action,
+          edge_type: (rel as any).edge_type || 'reference',
+          time: timeScope,
+          usc_title: selectedTitle,
+        });
+      });
+
+      return {
+        nodes: Array.from(nodeMap.values()),
+        links,
+      };
+    }
+
+    return null;
+  }, [buildMode, filteredDisplayGraph, relationships, timeScope, selectedTitle]);
+
+
+
   return (
     <>
       <div className="flex h-screen bg-gray-900 text-white">
@@ -1050,6 +1107,7 @@ const loadNodeRelationships = async () => {
             includeUndated={includeUndated}
             onIncludeUndatedChange={() => {}}
             keywords={keywords}
+            bottomUpSearchKeywords={bottomUpSearchKeywords}
             onKeywordsChange={setKeywords}
             buildMode={buildMode}
             timeScope={timeScope}
@@ -1063,6 +1121,8 @@ const loadNodeRelationships = async () => {
             onBottomUpSearch={handleBottomUpSearch}
             displayGraphInfo={displayGraphInfo}
             topDownGraphInfo={topDownGraphInfo}
+            currentGraphData={currentGraphData}
+            networkGraphRef={networkGraphRef}
           />
         </div>
 
@@ -1082,6 +1142,7 @@ const loadNodeRelationships = async () => {
             </div>
           ) : (
             <NetworkGraph
+              ref={networkGraphRef}
               key={`${selectedTitle}::${buildMode}`}
               graphData={buildMode === 'bottomUp' ? filteredDisplayGraph : undefined}
               relationships={buildMode === 'topDown' ? relationships : undefined}
