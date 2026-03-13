@@ -2,7 +2,6 @@
 
 export type NodeType = 'section' | 'entity' | 'concept' | 'index';
 
-// Change TimeScope to be a year string (e.g., "2015", "2024")
 export type TimeScope = string;
 
 export type SelectedNode = {
@@ -15,10 +14,12 @@ export interface GraphNode extends d3.SimulationNodeDatum {
   name: string;
   node_type: NodeType;
 
-  // Dataset scope fields - now 'time' is a year string
-  time?: TimeScope;
-  usc_title?: string;     // ← NEW: USC Title number from JSON ("26", "27", etc.)
-  source_title?: string;  // ← KEEP: Legacy field if used elsewhere
+  // Dataset scope fields
+  time?: TimeScope;         // Year string e.g. "2025"
+  // NOTE: 'title' is dual-purpose depending on node_type:
+  //   - term nodes  → USC number as string, e.g. "26"
+  //   - index nodes → hierarchy text, e.g. "TITLE 26" (may overwrite USC number)
+  title?: string | null;
 
   // Runtime computed properties
   val?: number;
@@ -26,15 +27,21 @@ export interface GraphNode extends d3.SimulationNodeDatum {
   color?: string;
   baseColor?: string;
 
-  // Hierarchy fields (parsed from node name)
-  title?: string | null;        // ← UNCHANGED: Hierarchy title text "TITLE 26"
+  // Hierarchy fields (index nodes only, parsed from named_path)
   subtitle?: string | null;
   part?: string | null;
+  subpart?: string | null;
   chapter?: string | null;
   subchapter?: string | null;
   section?: string | null;
+  section_code?: string | null;
   subsection?: string | null;
+  paragraph?: string | null;
+  subparagraph?: string | null;
+  clause?: string | null;
+  subclause?: string | null;
   display_label?: string | null;
+  index_heading?: string;
 
   // Properties from CSV data
   properties?: {
@@ -44,14 +51,13 @@ export interface GraphNode extends d3.SimulationNodeDatum {
     [key: string]: any;
   };
 
-  // Legacy compatibility (mapped from properties or hierarchy)
+  // Legacy compatibility
   full_name?: string;
   text?: string;
   section_text?: string | null;
   term_type?: string;
-  index_heading?: string;
 
-  // D3 simulation properties (inherited from d3.SimulationNodeDatum)
+  // D3 simulation (inherited from d3.SimulationNodeDatum)
   x?: number;
   y?: number;
   vx?: number;
@@ -65,12 +71,8 @@ export interface GraphLink {
   target: string | GraphNode;
   edge_type: 'definition' | 'reference' | 'hierarchy';
   action: string;
-
-  // Dataset scope fields - now 'time' is a year string
   time?: TimeScope;
-  usc_title?: string;     // ← NEW: USC Title number from JSON ("26", "27", etc.)
-  source_title?: string;  // ← KEEP: Legacy field if used elsewhere
-
+  title?: string;       // USC title number written by Python, e.g. "26"
   definition?: string;
   location?: string;
   timestamp?: string;
@@ -82,64 +84,17 @@ export interface GraphData {
   links: GraphLink[];
 }
 
-export interface Relationship {
-  id: number;
-  doc_id: string;
-  timestamp: string | null;
-  actor: string;
-  action: string;
-  target: string;
-  location: string | null;
-  tags: string[];
-
-  actor_type?: NodeType;
-  target_type?: NodeType;
-  actor_id?: string;
-  target_id?: string;
-  definition?: string;
-  actor_display_label?: string;
-  target_display_label?: string;
-}
-
-export interface Actor {
+export interface ManifestTitle {
   id: string;
   name: string;
-  connection_count: number;
-  time?: TimeScope;
+  description?: string;
+  timeScopes: string[];
+  timeScopeType?: 'year' | 'version' | 'scenario' | 'custom';
 }
 
-export interface Stats {
-  totalDocuments: { count: number };
-  totalTriples: { count: number };
-  totalActors: { count: number };
-  categories: { category: string; count: number }[];
-}
-
-export interface Document {
-  doc_id: string;
-  file_path: string;
-  one_sentence_summary: string;
-  paragraph_summary: string;
-  category: string;
-  date_range_earliest: string | null;
-  date_range_latest: string | null;
-
-  full_name?: string;
-  text?: string;
-  title?: string | null;
-  subtitle?: string | null;
-  part?: string | null;
-  chapter?: string | null;
-  subchapter?: string | null;
-  section?: string | null;
-  subsection?: string | null;
-}
-
-export interface TagCluster {
-  id: number;
-  name: string;
-  exemplars: string[];
-  tagCount: number;
+export interface Manifest {
+  version: number;
+  titles: ManifestTitle[];
 }
 
 export interface NetworkBuilderState {
@@ -155,8 +110,8 @@ export interface NetworkBuilderState {
   )[];
   allowedNodeTypes: ('section' | 'entity' | 'concept' | 'index')[];
   allowedEdgeTypes: ('definition' | 'reference' | 'hierarchy')[];
-  allowedTitles: number[];
-  allowedSections: string[];
+  allowedTitles: string[];
+  allowedYears: string[];
   seedNodeIds: string[];
   expansionDepth: number;
   maxNodesPerExpansion: number;
@@ -168,22 +123,4 @@ export interface FilteredGraph {
   links: GraphLink[];
   truncated: boolean;
   matchedCount: number;
-}
-
-// ==============================
-// FLEXIBLE MANIFEST - Works for years, pre/post, versions, etc.
-// ==============================
-
-export interface ManifestTitle {
-  id: string;                 // "26", "obbba-analysis", "custom-upload", etc.
-  name: string;               // "Internal Revenue Code", "OBBBA Comparison"
-  description?: string;       // Optional longer description
-  timeScopes: string[];       // ← CHANGED from 'years' to 'timeScopes'
-                              // Can be: ["2015", "2016", ...] OR ["pre-OBBBA", "post-OBBBA"]
-  timeScopeType?: 'year' | 'version' | 'scenario' | 'custom';  // ← NEW: Optional hint for UI
-}
-
-export interface Manifest {
-  version: number;            // Format version (currently 1)
-  titles: ManifestTitle[];    // Array of available titles/datasets
 }

@@ -2,23 +2,23 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { fetchDocument, fetchDocumentText, fetchNodeDetails } from '../api';
-import type { Document, TimeScope } from '../types'; // ← CHANGED: Import TimeScope
+import type { Document, TimeScope } from '../types';
 
 interface DocumentModalProps {
   docId: string;
   highlightTerm: string | null;
   secondaryHighlightTerm?: string | null;
   searchKeywords?: string;
-  timeScope: TimeScope;                          // ← CHANGED: Generic TimeScope instead of hardcoded
-  onTimeScopeChange: (scope: TimeScope) => void; // ← CHANGED: Generic TimeScope
+  timeScope: TimeScope;
+  onTimeScopeChange: (scope: TimeScope) => void;
   onClose: () => void;
-  
-  // ==============================
-  // NEW: Multi-title props
-  // ==============================
-  selectedTitle: string;              // ← NEW: Currently selected USC title
-  availableTimeScopes: string[];      // ← NEW: Available time scopes for dropdown
+  selectedTitle: string;
+  availableTimeScopes: string[];
   isGraphLoading: boolean;
+  onNext?: () => void;
+  onPrev?: () => void;
+  currentIndex?: number;
+  totalCount?: number;
 }
 
 interface MatchPosition {
@@ -44,47 +44,45 @@ export default function DocumentModal({
   timeScope,
   onTimeScopeChange,
   onClose,
-  selectedTitle,              // ← NEW: Destructure new props
+  selectedTitle,
   availableTimeScopes,
   isGraphLoading,
+  onNext,
+  onPrev,
+  currentIndex,
+  totalCount,
 }: DocumentModalProps) {
   const [document, setDocument] = useState<Document | null>(null);
   const [documentText, setDocumentText] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [matchPositions, setMatchPositions] = useState<MatchPosition[]>([]);
-  const [nodeNotFound, setNodeNotFound] = useState(false); // ← NEW: Track if node doesn't exist in this timeScope
+  const [nodeNotFound, setNodeNotFound] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const matchRefs = useRef<Map<number, HTMLElement>>(new Map());
 
-  // ==============================
-  // MODIFIED: Now includes title parameter in all API calls
-  // ==============================
   useEffect(() => {
-
     let active = true;
 
     const loadDocument = async () => {
-      
       if (isGraphLoading) {
         setLoading(true);
-        return; // Don't fetch yet, but stay in loading state
+        return;
       }
-  
+
       setLoading(true);
       setError(null);
-      setNodeNotFound(false); // ← NEW: Reset flag
+      setNodeNotFound(false);
 
       try {
         const [doc, textData, nodeDetails] = await Promise.all([
-          fetchDocument(docId, selectedTitle, timeScope),           // ← CHANGED: Added title
-          fetchDocumentText(docId, selectedTitle, timeScope),       // ← CHANGED: Added title
-          fetchNodeDetails(docId, selectedTitle, timeScope),        // ← CHANGED: Added title
+          fetchDocument(docId, selectedTitle, timeScope),
+          fetchDocumentText(docId, selectedTitle, timeScope),
+          fetchNodeDetails(docId, selectedTitle, timeScope),
         ]);
 
         if (!active) return;
 
-        // ← NEW: Check if node exists
         if (!nodeDetails) {
           setNodeNotFound(true);
           setDocument(null);
@@ -110,12 +108,9 @@ export default function DocumentModal({
 
         setDocumentText(textData.text);
       } catch (err: any) {
-        // Ignore request cancellations (common during rapid timeScope switching)
         if (err?.name === 'AbortError') return;
-
         console.error('Error loading document:', err);
         if (!active) return;
-
         setError(err instanceof Error ? err.message : 'Failed to load section text');
       } finally {
         if (active) setLoading(false);
@@ -123,11 +118,8 @@ export default function DocumentModal({
     };
 
     loadDocument();
-
-    return () => {
-      active = false;
-    };
-  }, [docId, selectedTitle, timeScope, isGraphLoading]); // ← CHANGED: Added selectedTitle to deps
+    return () => { active = false; };
+  }, [docId, selectedTitle, timeScope, isGraphLoading]);
 
   useEffect(() => {
     matchRefs.current.clear();
@@ -174,12 +166,7 @@ export default function DocumentModal({
       const regex = new RegExp(`(${searchPatterns.join('|')})`, 'gi');
       let match;
       while ((match = regex.exec(documentText)) !== null) {
-        positions.push({
-          index: match.index,
-          term: match[0],
-          type: 'search',
-          percentage: (match.index / textLength) * 100,
-        });
+        positions.push({ index: match.index, term: match[0], type: 'search', percentage: (match.index / textLength) * 100 });
       }
     }
 
@@ -187,12 +174,7 @@ export default function DocumentModal({
       const regex = new RegExp(`(${primaryPatterns.join('|')})`, 'gi');
       let match;
       while ((match = regex.exec(documentText)) !== null) {
-        positions.push({
-          index: match.index,
-          term: match[0],
-          type: 'primary',
-          percentage: (match.index / textLength) * 100,
-        });
+        positions.push({ index: match.index, term: match[0], type: 'primary', percentage: (match.index / textLength) * 100 });
       }
     }
 
@@ -200,12 +182,7 @@ export default function DocumentModal({
       const regex = new RegExp(`(${secondaryPatterns.join('|')})`, 'gi');
       let match;
       while ((match = regex.exec(documentText)) !== null) {
-        positions.push({
-          index: match.index,
-          term: match[0],
-          type: 'secondary',
-          percentage: (match.index / textLength) * 100,
-        });
+        positions.push({ index: match.index, term: match[0], type: 'secondary', percentage: (match.index / textLength) * 100 });
       }
     }
 
@@ -268,7 +245,6 @@ export default function DocumentModal({
 
       const regex = new RegExp(`(${patterns.join('|')})`, 'gi');
       const parts = text.split(regex);
-
       let currentIndex = 0;
 
       return parts.map((part, index) => {
@@ -286,13 +262,8 @@ export default function DocumentModal({
 
         if (isSearchMatch) {
           return (
-            <mark
-              key={index}
-              ref={(el) => {
-                if (el) matchRefs.current.set(partStart, el);
-              }}
-              className="bg-green-300 text-black font-semibold px-1 rounded"
-            >
+            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
+              className="bg-green-300 text-black font-semibold px-1 rounded">
               {part}
             </mark>
           );
@@ -300,30 +271,17 @@ export default function DocumentModal({
 
         if (term && (partLower === term.toLowerCase() || primaryWords.has(partLower))) {
           return (
-            <mark
-              key={index}
-              ref={(el) => {
-                if (el) matchRefs.current.set(partStart, el);
-              }}
-              className="bg-yellow-400 text-black px-1 rounded"
-            >
+            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
+              className="bg-yellow-400 text-black px-1 rounded">
               {part}
             </mark>
           );
         }
 
-        if (
-          secondaryTerm &&
-          (partLower === secondaryTerm.toLowerCase() || secondaryWords.has(partLower))
-        ) {
+        if (secondaryTerm && (partLower === secondaryTerm.toLowerCase() || secondaryWords.has(partLower))) {
           return (
-            <mark
-              key={index}
-              ref={(el) => {
-                if (el) matchRefs.current.set(partStart, el);
-              }}
-              className="bg-orange-300 text-black px-1 rounded"
-            >
+            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
+              className="bg-orange-300 text-black px-1 rounded">
               {part}
             </mark>
           );
@@ -345,45 +303,29 @@ export default function DocumentModal({
         className="bg-gray-800 rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col relative border border-gray-700"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="p-6 border-b border-gray-700 flex justify-between items-start">
           <div className="flex-1">
-            {/* ==============================
-                MODIFIED: Header with time scope badge and selector
-                ============================== */}
             <div className="flex items-center gap-2 mb-3">
               <h2 className="text-2xl font-semibold text-blue-400">
                 {document?.display_label || document?.name || document?.doc_id || docId}
               </h2>
-
-              {/* ← CHANGED: Generic badge instead of Pre/Post OBBBA specific */}
               <span className="inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold bg-purple-600 text-white">
                 {timeScope}
               </span>
-
-              {/* ==============================
-                  NEW: Time Scope Dropdown Selector
-                  ============================== */}
               <div className="ml-auto flex gap-2">
                 <select
                   value={timeScope}
-                  onChange={(e) => {
-                    e.stopPropagation();
-                    onTimeScopeChange(e.target.value);
-                  }}
+                  onChange={(e) => { e.stopPropagation(); onTimeScopeChange(e.target.value); }}
                   className="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-xs text-gray-100 focus:outline-none focus:border-blue-500"
                 >
                   {availableTimeScopes.map((scope) => (
-                    <option key={scope} value={scope}>
-                      {scope}
-                    </option>
+                    <option key={scope} value={scope}>{scope}</option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {/* ==============================
-                NEW: Node not found message
-                ============================== */}
             {nodeNotFound && (
               <div className="mb-3 p-3 bg-yellow-900/20 border border-yellow-700/30 rounded">
                 <div className="text-sm text-yellow-300 font-semibold">
@@ -394,66 +336,32 @@ export default function DocumentModal({
                 </div>
               </div>
             )}
-          
+
             {document && (document.title || document.part || document.chapter || document.subchapter || document.section) && (
               <div className="space-y-1 text-sm text-gray-300 mb-3 font-mono">
-                {document.title && (
-                  <div>
-                    <span className="text-gray-500">Title:</span> {document.title}
-                  </div>
-                )}
-                {document.subtitle && (
-                  <div>
-                    <span className="text-gray-500">Subtitle:</span> {document.subtitle}
-                  </div>
-                )}
-                {document.part && (
-                  <div>
-                    <span className="text-gray-500">Part:</span> {document.part}
-                  </div>
-                )}
-                {document.chapter && (
-                  <div>
-                    <span className="text-gray-500">Chapter:</span> {document.chapter}
-                  </div>
-                )}
-                {document.subchapter && (
-                  <div>
-                    <span className="text-gray-500">Subchapter:</span> {document.subchapter}
-                  </div>
-                )}
-                {document.section && (
-                  <div>
-                    <span className="text-gray-500">Section:</span> {document.section}
-                  </div>
-                )}
-                {document.subsection && (
-                  <div>
-                    <span className="text-gray-500">Subsection:</span> {document.subsection}
-                  </div>
-                )}
+                {document.title     && <div><span className="text-gray-500">Title:</span> {document.title}</div>}
+                {document.subtitle  && <div><span className="text-gray-500">Subtitle:</span> {document.subtitle}</div>}
+                {document.part      && <div><span className="text-gray-500">Part:</span> {document.part}</div>}
+                {document.chapter   && <div><span className="text-gray-500">Chapter:</span> {document.chapter}</div>}
+                {document.subchapter && <div><span className="text-gray-500">Subchapter:</span> {document.subchapter}</div>}
+                {document.section   && <div><span className="text-gray-500">Section:</span> {document.section}</div>}
+                {document.subsection && <div><span className="text-gray-500">Subsection:</span> {document.subsection}</div>}
                 {document.index_heading && document.index_heading.trim() !== '' && (
-                  <div>
-                    <span className="text-gray-500">Heading:</span> {document.index_heading}
-                  </div>
+                  <div><span className="text-gray-500">Heading:</span> {document.index_heading}</div>
                 )}
               </div>
             )}
-            
+
             {document && document.full_name && !document.title && !document.section && (
-              <h3 className="text-lg font-medium text-gray-400 mb-1">
-                {document.full_name}
-              </h3>
+              <h3 className="text-lg font-medium text-gray-400 mb-1">{document.full_name}</h3>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="ml-4 text-gray-400 hover:text-white text-2xl leading-none transition-colors"
-          >
+          <button onClick={onClose} className="ml-4 text-gray-400 hover:text-white text-2xl leading-none transition-colors">
             ✕
           </button>
         </div>
 
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 pr-12 relative" ref={contentRef}>
           {!loading && !error && matchPositions.length > 0 && (
             <div className="absolute right-4 top-0 bottom-0 w-3 bg-gray-700/50 rounded-full pointer-events-none z-10">
@@ -462,11 +370,9 @@ export default function DocumentModal({
                   key={idx}
                   onClick={() => scrollToMatch(match.index)}
                   className={`absolute w-3 h-3 rounded-full transform transition-all hover:scale-150 pointer-events-auto ${
-                    match.type === 'search'
-                      ? 'bg-green-300 hover:bg-green-200'
-                      : match.type === 'primary'
-                      ? 'bg-yellow-400 hover:bg-yellow-300'
-                      : 'bg-orange-300 hover:bg-orange-200'
+                    match.type === 'search'    ? 'bg-green-300 hover:bg-green-200' :
+                    match.type === 'primary'   ? 'bg-yellow-400 hover:bg-yellow-300' :
+                                                 'bg-orange-300 hover:bg-orange-200'
                   }`}
                   style={{ top: `${match.percentage}%` }}
                   title={`${match.term} (${idx + 1}/${matchPositions.length})`}
@@ -482,12 +388,9 @@ export default function DocumentModal({
           )}
 
           {error && (
-            <div className="bg-red-900/30 border border-red-700 rounded p-4 text-red-300">
-              {error}
-            </div>
+            <div className="bg-red-900/30 border border-red-700 rounded p-4 text-red-300">{error}</div>
           )}
 
-          {/* ← NEW: Show message when node doesn't exist in this timeScope */}
           {!loading && !error && nodeNotFound && (
             <div className="flex items-center justify-center py-12">
               <div className="text-gray-400 text-center">
@@ -508,17 +411,13 @@ export default function DocumentModal({
           {!loading && !error && !nodeNotFound && documentText && documentText.trim() !== '' && (
             <div className="prose prose-invert max-w-none">
               <div className="whitespace-pre-wrap text-gray-300 leading-relaxed font-mono text-sm">
-                {highlightText(
-                  documentText,
-                  highlightTerm,
-                  secondaryHighlightTerm || null,
-                  searchKeywords || null,
-                )}
+                {highlightText(documentText, highlightTerm, secondaryHighlightTerm || null, searchKeywords || null)}
               </div>
             </div>
           )}
         </div>
 
+        {/* Footer */}
         <div className="p-4 border-t border-gray-700 flex justify-between items-center">
           <div className="text-sm text-gray-500 flex gap-4">
             {searchKeywords && (
@@ -543,15 +442,37 @@ export default function DocumentModal({
               </span>
             )}
           </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {(onPrev || onNext) && (
+              <div className="flex items-center gap-2 mr-4">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onPrev?.(); }}
+                  disabled={!onPrev}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded text-sm transition-colors"
+                >
+                  Prev
+                </button>
+                {currentIndex !== undefined && totalCount !== undefined && (
+                  <span className="text-xs text-gray-400 min-w-[60px] text-center">
+                    {currentIndex === -1 ? '★' : currentIndex + 1} / {totalCount}
+                  </span>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onNext?.(); }}
+                  disabled={!onNext}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded text-sm transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onClose(); }}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

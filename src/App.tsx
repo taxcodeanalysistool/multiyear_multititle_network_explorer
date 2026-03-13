@@ -8,12 +8,15 @@ import MobileBottomNav from './components/MobileBottomNav';
 import { WelcomeModal } from './components/WelcomeModal';
 import { NetworkBuilder } from './services/networkBuilder';
 import DocumentModal from './components/DocumentModal';
+import TableView from './components/TableView';
+
 import { 
   fetchRelationships, 
   fetchActorRelationships, 
   fetchActorCounts,
   fetchStats,
-  loadManifest
+  loadManifest,
+  fetchNodeDetails
 } from './api';
 import type {
   Stats,
@@ -35,7 +38,12 @@ function App() {
   const [timeScope, setTimeScope] = useState<TimeScope>('2025');
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [availableTimeScopes, setAvailableTimeScopes] = useState<string[]>([]);
+  const [showSectionLevelOnly, setShowSectionLevelOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<'graph' | 'table'>('graph');
   const [isLoadingNodeRelationships, setIsLoadingNodeRelationships] = useState(false);
+  const [openDocIndex, setOpenDocIndex] = useState<number | null>(null);
+  const [selectedNodeDisplayLabel, setSelectedNodeDisplayLabel] = useState<string | null>(null);
+
   const networkGraphRef = useRef<{ getSvgElement: () => SVGSVGElement | null }>(null);
   
   const [openDocId, setOpenDocId] = useState<string | null>(null);
@@ -93,7 +101,7 @@ function App() {
   const [minDensity, setMinDensity] = useState(50);
   const [enabledClusterIds, setEnabledClusterIds] = useState<Set<number>>(new Set());
   const [enabledCategories, setEnabledCategories] = useState<Set<string>>(
-    new Set(['definition', 'reference', 'hierarchy'])
+    new Set(['definition', 'reference'])
   );
   const [enabledNodeTypes, setEnabledNodeTypes] = useState<Set<string>>(new Set(['index']));
   const [yearRange] = useState<[number, number]>([2015, 2025]);
@@ -101,7 +109,7 @@ function App() {
   const [keywords, setKeywords] = useState('');
   const [actorTotalCounts, setActorTotalCounts] = useState<Record<string, number>>({});
   const [manifestLoaded, setManifestLoaded] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('hasSeenWelcome'));
   const [isInitialized, setIsInitialized] = useState(false);
 
   const [isSwitchingScope, setIsSwitchingScope] = useState(false);
@@ -129,6 +137,19 @@ function App() {
   // Filters are already applied in the API
   return actorRelationships;
 }, [isSelectedInScope, actorRelationships]);
+
+const navRelationships = useMemo(() => {
+  if (!selectedNodeId) return actorRelationships;
+  return actorRelationships.filter((rel) => {
+    const actorId = String(rel.actor_id ?? rel.actor ?? '');
+    const targetId = String(rel.target_id ?? rel.target ?? '');
+    const strippedSelectedId = selectedNodeId.replace('index:', '');
+    const strippedActorId = actorId.replace('index:', '');
+    const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
+    return !otherId.startsWith('term:');
+  });
+}, [actorRelationships, selectedNodeId]);
+
 
 
 // Filter displayGraph based on enabled filters (for bottom-up mode)
@@ -219,6 +240,10 @@ const filteredDisplayGraph = useMemo(() => {
   };
 }, [displayGraph, enabledCategories, enabledNodeTypes, buildMode]);
 
+  useEffect(() => {
+  setViewMode('graph');
+}, [selectedTitle, timeScope]);
+
 // Update displayGraphInfo when filteredDisplayGraph changes
 useEffect(() => {
   if (buildMode !== 'bottomUp') return;
@@ -234,6 +259,16 @@ useEffect(() => {
 
 
 const rightSidebarTotal = isSelectedInScope ? actorTotalBeforeFilter : 0;
+
+const getOtherNodeId = (rel: any, selectedId: string): string | null => {
+  const strippedSelectedId = selectedId.replace('index:', '');
+  const actorId = String(rel.actor_id ?? rel.actor ?? '');
+  const targetId = String(rel.target_id ?? rel.target ?? '');
+  const strippedActorId = actorId.replace('index:', '');
+  const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
+  return otherId ? `index:${otherId.replace('index:', '')}` : null;
+};
+
 
   const convertGraphToRelationships = useCallback(
     (nodes: GraphNode[], links: GraphLink[]): Relationship[] => {
@@ -775,6 +810,18 @@ const loadNodeRelationships = async () => {
 
     setActorRelationships(relationships);
     setActorTotalBeforeFilter(totalBeforeFilter);
+// After setActorTotalBeforeFilter(response.totalBeforeFilter):
+try {
+  const details = await fetchNodeDetails(id, selectedTitle, timeScope);
+  const label = details?.display_label
+    ? details.display_label.replace('26 U.S.C. ', '').replace(',', '').trim()
+    : id;
+  setSelectedNodeDisplayLabel(label);
+} catch (err) {
+  setSelectedNodeDisplayLabel(id);
+}
+
+
     setIsRightSidebarOpen(true);
   } catch (err) {
     console.error('Failed to load node relationships after timeScope change:', err);
@@ -1013,14 +1060,44 @@ const loadNodeRelationships = async () => {
     setActorRelationships([]);
   }, []);
 
-  const handleResetToTopDown = useCallback(() => {
-    setBuildMode('topDown');
-    setBottomUpSearchKeywords('');
-    setBottomUpSearchParams(null);
-    setDisplayGraphInfo(null);
-    setSelectedNode(null);
-    setActorRelationships([]);
-  }, []);
+const handleResetToTopDown = useCallback(() => {
+  setBuildMode('topDown');
+  setBottomUpSearchKeywords('');
+  setBottomUpSearchParams(null);
+  setDisplayGraphInfo(null);
+  setTopDownGraphInfo(null);
+  setSelectedNode(null);
+  setActorRelationships([]);
+  setRelationships([]);
+  setIsInitialized(false);   // ← forces the top-down useEffect to re-run
+  setTimeout(() => setIsInitialized(true), 0);  // ← re-enables it next tick
+}, []);
+
+const tableViewData = useMemo(() => {
+  let nodes = scopedFullGraph.nodes;
+
+  // In bottom-up mode with an active search, narrow to matched nodes
+  if (buildMode === 'bottomUp' && bottomUpSearchKeywords.trim()) {
+    const searchNodeIds = new Set(displayGraph.nodes.map((n) => n.id));
+    nodes = scopedFullGraph.nodes.filter((n) => searchNodeIds.has(n.id));
+  }
+
+  // Apply node type filters (mirrors what the graph does)
+  if (enabledNodeTypes.size > 0) {
+    nodes = nodes.filter((n) => enabledNodeTypes.has(n.node_type));
+  }
+
+  // Keep links for degree calculation only — nodes aren't filtered by connectivity
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const links = scopedFullGraph.links.filter((l) => {
+    const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
+    const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
+    return nodeIds.has(s) && nodeIds.has(t);
+  });
+
+  return { nodes, links };
+}, [scopedFullGraph, buildMode, bottomUpSearchKeywords, displayGraph, enabledNodeTypes]);
+
 
   // Add this before the return statement
   const currentGraphData = useMemo(() => {
@@ -1133,8 +1210,30 @@ const loadNodeRelationships = async () => {
             </div>
           )}
 
+        {/* Graph / Table toggle — bottom left, next to sidebar */}
+        <div className="absolute bottom-14 left-4 z-20 flex rounded-lg overflow-hidden border border-gray-600">
+          <button
+            className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+              viewMode === 'graph' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+            onClick={() => setViewMode('graph')}
+          >
+            Graph
+          </button>
+          <button
+            className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+              viewMode === 'table' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+            }`}
+            onClick={() => setViewMode('table')}
+          >
+            Table
+          </button>
+        </div>
+
+        {/* Graph — always mounted, hidden when table is active */}
+        <div style={{ display: viewMode === 'table' ? 'none' : 'flex', height: '100%', width: '100%' }}>
           {loading ? (
-            <div className="flex items-center justify-center h-full bg-gray-900">
+            <div className="flex items-center justify-center h-full w-full bg-gray-900">
               <div className="text-center">
                 <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
                 <p className="text-gray-400">Loading network data...</p>
@@ -1157,6 +1256,20 @@ const loadNodeRelationships = async () => {
           )}
         </div>
 
+        {/* Table — only mounted when active */}
+        {viewMode === 'table' && (
+          <div style={{ position: 'absolute', inset: 0 }}>
+            <TableView
+              nodes={tableViewData.nodes}
+              links={tableViewData.links}
+              selectedNodeId={selectedNodeId}
+              onNodeClick={handleNodeClick}
+            />
+          </div>
+        )}
+
+        </div>
+
         <div className="hidden lg:block">
           {isRightSidebarOpen && (
             <RightSidebar
@@ -1168,7 +1281,25 @@ const loadNodeRelationships = async () => {
               keywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
               timeScope={timeScope}
               onTimeScopeChange={switchTimeScope}
-              onViewFullText={(docId) => setOpenDocId(docId)}
+              onViewFullText={(docId) => {
+  const strDocId = String(docId);
+  const strippedDocId = strDocId.replace('index:', '');
+  const strippedSelectedId = selectedNodeId!.replace('index:', '');
+  if (strippedDocId === strippedSelectedId) {
+    setOpenDocId(strDocId);
+    setOpenDocIndex(-1);
+    return;
+  }
+  const idx = navRelationships.findIndex((rel) => {
+    const actor = String(rel.actor ?? '');
+    const target = String(rel.target ?? '');
+    const otherId = actor === strippedSelectedId ? target : actor;
+    return otherId === strippedDocId;
+  });
+  setOpenDocId(strDocId);
+  setOpenDocIndex(idx >= 0 ? idx : 0);
+}}
+
               selectedTitle={selectedTitle}
               availableTimeScopes={availableTimeScopes}
               isLoadingRelationships={isLoadingNodeRelationships}
@@ -1201,20 +1332,52 @@ const loadNodeRelationships = async () => {
 
       <WelcomeModal isOpen={showWelcome} onClose={handleCloseWelcome} />
 
-      {openDocId && (
-        <DocumentModal
-          docId={openDocId}
-          highlightTerm={selectedNodeId}
-          secondaryHighlightTerm={null}
-          searchKeywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
-          timeScope={timeScope}
-          onTimeScopeChange={switchTimeScope}
-          onClose={() => setOpenDocId(null)}
-          selectedTitle={selectedTitle}
-          availableTimeScopes={availableTimeScopes}
-          isGraphLoading={loading || isSwitchingScope}
-        />
-      )}
+{openDocId && (
+  <DocumentModal
+    docId={openDocId}
+    highlightTerm={openDocIndex === -1 ? null : selectedNodeDisplayLabel}
+    secondaryHighlightTerm={null}
+    searchKeywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
+    timeScope={timeScope}
+    onTimeScopeChange={switchTimeScope}
+    onClose={() => { setOpenDocId(null); setOpenDocIndex(null); }}
+    selectedTitle={selectedTitle}
+    availableTimeScopes={availableTimeScopes}
+    isGraphLoading={loading || isSwitchingScope}
+    currentIndex={openDocIndex ?? undefined}
+    totalCount={openDocIndex !== null ? navRelationships.length : undefined}
+    onPrev={
+      openDocIndex !== null && openDocIndex > 0
+        ? () => {
+            const prevIdx = openDocIndex - 1;
+            const rel = navRelationships[prevIdx];
+            const id = getOtherNodeId(rel, selectedNodeId!);
+            if (!id) return;
+            setOpenDocId(id);
+            setOpenDocIndex(prevIdx);
+          }
+        : openDocIndex === 0
+        ? () => {
+            setOpenDocId(`index:${selectedNodeId!.replace('index:', '')}`);
+            setOpenDocIndex(-1);
+          }
+        : undefined
+    }
+    onNext={
+      openDocIndex !== null && (openDocIndex === -1 || openDocIndex < navRelationships.length - 1)
+        ? () => {
+            const nextIdx = openDocIndex === -1 ? 0 : openDocIndex + 1;
+            const rel = navRelationships[nextIdx];
+            const id = getOtherNodeId(rel, selectedNodeId!);
+            if (!id) return;
+            setOpenDocId(id);
+            setOpenDocIndex(nextIdx);
+          }
+        : undefined
+    }
+  />
+)}
+
     </>
   );
 }

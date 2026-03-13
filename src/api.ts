@@ -173,7 +173,19 @@ export async function loadGraph(title: string, timeScope: TimeScope): Promise<Gr
     };
   });
 
-  const graphData = { nodes, links };
+const titleNodePattern = new RegExp(`^term:title-`, 'i');
+
+const filteredNodes = nodes.filter((n) => !titleNodePattern.test(n.id));
+
+// Also remove any links that referenced the filtered nodes
+const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+const filteredLinks = links.filter((l) => {
+  const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
+  const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
+  return filteredNodeIds.has(s) && filteredNodeIds.has(t);
+});
+
+const graphData = { nodes: filteredNodes, links: filteredLinks };
   cachedGraphs.set(key, graphData);
   
   return graphData;
@@ -437,34 +449,45 @@ export async function fetchNodeCounts(
 // Search Actors
 // ==============================
 export async function searchActors(
-  query: string, 
+  query: string,
   title: string,
   timeScope: TimeScope
 ): Promise<Actor[]> {
   const graph = await getGraphOrThrow(title, timeScope);
 
   const lowerQuery = query.toLowerCase();
-  
   const pool = graph.nodes.filter((n) => n.time === timeScope);
 
   const matches = pool
     .filter((node) => {
-      const nameMatch = (node.name ?? '').toLowerCase().includes(lowerQuery);
-      const labelMatch = (node.display_label ?? '').toLowerCase().includes(lowerQuery);
-      const textMatch = (node.properties?.text ?? '').toLowerCase().includes(lowerQuery);
-      return nameMatch || labelMatch || textMatch;
+      const nameMatch        = (node.name ?? '').toLowerCase().includes(lowerQuery);
+      const labelMatch       = (node.display_label ?? '').toLowerCase().includes(lowerQuery);
+      const textMatch        = (node.properties?.text ?? '').toLowerCase().includes(lowerQuery);
+      const propNameMatch    = (node.properties?.name ?? '').toLowerCase().includes(lowerQuery);
+      const fullNameMatch    = (node.full_name ?? '').toLowerCase().includes(lowerQuery);
+      const idMatch          = (node.id ?? '').toLowerCase().includes(lowerQuery);
+      return nameMatch || labelMatch || textMatch || propNameMatch || fullNameMatch || idMatch;
     })
     .map((node) => ({
       id: node.id,
-      name: node.display_label || node.name,
+      name: node.display_label || node.name || node.id,
       connection_count: node.val || 0,
       time: node.time,
+      node_type: node.node_type,
     }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 20);
+    .sort((a, b) => {
+      // Exact matches first
+      const aExact = a.name.toLowerCase().startsWith(lowerQuery) ? 0 : 1;
+      const bExact = b.name.toLowerCase().startsWith(lowerQuery) ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
+      // Then by connection count descending
+      return b.connection_count - a.connection_count;
+    })
+    .slice(0, 30); // ← increased from 20
 
   return matches;
 }
+
 
 // ==============================
 // Fetch Document

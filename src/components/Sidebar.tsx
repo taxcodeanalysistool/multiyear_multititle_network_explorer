@@ -178,6 +178,7 @@ export default function Sidebar({
   availableTimeScopes,
   
   onBottomUpSearch,
+  onResetToTopDown,
   displayGraphInfo,
   topDownGraphInfo,
   currentGraphData,
@@ -192,6 +193,8 @@ export default function Sidebar({
   const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [localLimit, setLocalLimit] = useState(limit);
   const [localKeywords, setLocalKeywords] = useState('');
+  const [exportExpanded, setExportExpanded] = useState(false);
+
   const limitDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const selectedNodeId = selectedNode?.id ?? null;
@@ -253,22 +256,28 @@ export default function Sidebar({
     };
   }, []);
 
-  const handleKeywordSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+const handleKeywordSubmit = (e?: React.FormEvent) => {
+  if (e) e.preventDefault();
 
-    if (onBottomUpSearch && localKeywords.trim()) {
-      onBottomUpSearch({
-        keywords: localKeywords,
-        expansionDegree: expansionDegree,
-        maxNodes: maxHops || 2000,
-        nodeTypes: Array.from(enabledNodeTypes),
-        edgeTypes: Array.from(enabledCategories),
-        searchFields: Array.from(searchFields),
-        searchLogic: searchLogic,
-        nodeRankingMode: 'global'
-      });
-    }
-  };
+if (!localKeywords.trim()) {
+  setLocalKeywords('');   // ← ensure input visually clears
+  onResetToTopDown?.();
+  return;
+}
+
+  if (onBottomUpSearch) {
+    onBottomUpSearch({
+      keywords: localKeywords,
+      expansionDegree: expansionDegree,
+      maxNodes: maxHops || 2000,
+      nodeTypes: Array.from(enabledNodeTypes),
+      edgeTypes: Array.from(enabledCategories),
+      searchFields: Array.from(searchFields),
+      searchLogic: searchLogic,
+      nodeRankingMode: 'global'
+    });
+  }
+};
 
   // ==============================
   // NEW: Get current title data for display
@@ -276,13 +285,78 @@ export default function Sidebar({
   const currentTitleData = manifest?.titles.find(t => t.id === selectedTitle);
   const timeScopeLabel = currentTitleData?.timeScopeType === 'year' ? 'Year' : 'Time Scope';
 
+  const USC_TITLE_NAMES: Record<string, string> = {
+  '01':  'General Provisions',
+  '02':  'The Congress',
+  '03':  'The President',
+  '04':  'Flag and Seal, Seat of Government, and the States',
+  '05':  'Government Organization and Employees',
+  '06':  'Domestic Security',
+  '07':  'Agriculture',
+  '08':  'Aliens and Nationality',
+  '09':  'Arbitration',
+  '10': 'Armed Forces',
+  '11': 'Bankruptcy',
+  '12': 'Banks and Banking',
+  '13': 'Census',
+  '14': 'Coast Guard',
+  '15': 'Commerce and Trade',
+  '16': 'Conservation',
+  '17': 'Copyrights',
+  '18': 'Crimes and Criminal Procedure',
+  '19': 'Customs Duties',
+  '20': 'Education',
+  '21': 'Food and Drugs',
+  '22': 'Foreign Relations and Intercourse',
+  '23': 'Highways',
+  '24': 'Hospitals and Asylums',
+  '25': 'Indians',
+  '26': 'Internal Revenue Code',
+  '27': 'Intoxicating Liquors',
+  '28': 'Judiciary and Judicial Procedure',
+  '29': 'Labor',
+  '30': 'Mineral Lands and Mining',
+  '31': 'Money and Finance',
+  '32': 'National Guard',
+  '33': 'Navigation and Navigable Waters',
+  '34': 'Navy (repealed)',
+  '35': 'Patents',
+  '36': 'Patriotic and National Observances',
+  '37': 'Pay and Allowances of the Uniformed Services',
+  '38': 'Veterans Benefits',
+  '39': 'Postal Service',
+  '40': 'Public Buildings, Property, and Works',
+  '41': 'Public Contracts',
+  '42': 'The Public Health and Welfare',
+  '43': 'Public Lands',
+  '44': 'Public Printing and Documents',
+  '45': 'Railroads',
+  '46': 'Shipping',
+  '47': 'Telecommunications',
+  '48': 'Territories and Insular Possessions',
+  '49': 'Transportation',
+  '50': 'War and National Defense',
+  '51': 'National and Commercial Space Programs',
+  '52': 'Voting and Elections',
+  '53': 'Small Business Act (reserved)',
+  '54': 'National Park Service and Related Programs',
+  '55': 'Science, Technology, and Related Matters (reserved)',
+  '56': 'Wildlife (reserved)',
+  '05a':  'Government Organization and Employees (Appendix)',
+  '11a': 'Bankruptcy (Appendix)',
+  '18a': 'Crimes and Criminal Procedure (Appendix)',
+  '28a': 'Judiciary and Judicial Procedure (Appendix)',
+  '50a': 'War and National Defense (Appendix)',
+};
+
+
   return (
     <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col h-screen overflow-hidden">
       {/* Header */}
       <div className="px-6 py-3 border-b border-gray-700 flex-shrink-0">
         <h1 className="font-bold text-blue-400" style={{ fontSize: '20px' }}>
-          {currentTitleData?.name || 'USC Network'}
-        </h1>
+  Title {selectedTitle} - {USC_TITLE_NAMES[selectedTitle] || currentTitleData?.name || 'USC Network'}
+</h1>
         <p className="mt-1 text-xs text-gray-400">
           {currentTitleData?.description || 'U.S. Code Visualization'} 
         </p>
@@ -297,10 +371,10 @@ export default function Sidebar({
             className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-100 focus:outline-none focus:border-blue-500"
           >
             {manifest.titles.map((title) => (
-              <option key={title.id} value={title.id}>
-                Title {title.id} - {title.name}
-              </option>
-            ))}
+  <option key={title.id} value={title.id}>
+    Title {title.id} — {USC_TITLE_NAMES[title.id] || title.name}
+  </option>
+))}
           </select>
         </div>
       )}
@@ -387,7 +461,7 @@ export default function Sidebar({
 
             {/* Total stats */}
             <div className="flex justify-between">
-              <span className="text-gray-400">Total sections:</span>
+              <span className="text-gray-400">Total nodes:</span>
               <span className="font-mono text-blue-400">
                 {stats.totalDocuments.count.toLocaleString()}
               </span>
@@ -596,21 +670,6 @@ export default function Sidebar({
           )}
         </div>
 
-{/* Export Section */}
-<div className="border-t border-gray-700 pt-4 px-2">
-  <ExportControls
-    graphData={currentGraphData}
-    buildMode={buildMode}
-    timeScope={timeScope}
-    selectedTitle={selectedTitle}
-    selectedNode={selectedNode}
-    filterTypes={Array.from(enabledNodeTypes)}
-    searchTerm={buildMode === 'bottomUp' ? (bottomUpSearchKeywords || '') : keywords}
-    svgElement={networkGraphRef?.current?.getSvgElement() || null}
-    displayGraphInfo={displayGraphInfo || topDownGraphInfo}
-  />
-</div>
-
 
         {/* Node filters */}
         {stats && (
@@ -683,7 +742,7 @@ export default function Sidebar({
 
         {/* Relationship filters */}
         {stats && (
-          <div className="p-4">
+          <div className="p-4 border-b border-gray-700">
             <button
               onClick={() => setCategoriesExpanded(!categoriesExpanded)}
               className="w-full flex items-center justify-between text-base font-semibold mb-3 text-white hover:text-blue-400 transition-colors"
@@ -753,6 +812,31 @@ export default function Sidebar({
             )}
           </div>
         )}
+
+        {/* Export */}
+        <div className="p-4 border-b border-gray-700">
+          <button
+            onClick={() => setExportExpanded(!exportExpanded)}
+            className="w-full flex items-center justify-between text-base font-semibold mb-3 text-white hover:text-blue-400 transition-colors"
+          >
+            <span>Export</span>
+            <span className="text-sm">{exportExpanded ? '▼' : '▶'}</span>
+          </button>
+          {exportExpanded && (
+            <ExportControls
+              graphData={currentGraphData}
+              buildMode={buildMode}
+              timeScope={timeScope}
+              selectedTitle={selectedTitle}
+              selectedNode={selectedNode}
+              filterTypes={Array.from(enabledNodeTypes)}
+              searchTerm={buildMode === 'bottomUp' ? (bottomUpSearchKeywords || '') : keywords}
+              svgElement={networkGraphRef?.current?.getSvgElement() || null}
+              displayGraphInfo={displayGraphInfo || topDownGraphInfo}
+            />
+          )}
+        </div>
+
       </div>
     </div>
   );
