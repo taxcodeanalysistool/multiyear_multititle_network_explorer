@@ -44,24 +44,69 @@ export async function loadManifest(): Promise<Manifest> {
 // ==============================
 // Core Fetch Helper
 // ==============================
+// REPLACE the existing fetchJson function with this:
 async function fetchJson<T>(relPath: string): Promise<T> {
   const res = await fetch(`${import.meta.env.BASE_URL}${relPath}`);
   if (!res.ok) throw new Error(`Failed to fetch: ${relPath} (${res.status})`);
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error(`File not found: ${relPath}`);
+  }
   return (await res.json()) as T;
 }
+
 
 // ==============================
 // Load Raw Graph
 // ==============================
 async function loadRawGraph(title: string, timeScope: TimeScope): Promise<RawGraph> {
-  const filename = `title-${title}-time-${timeScope}.json`;
-  
-  try {
-    return await fetchJson<RawGraph>(filename);
-  } catch (err) {
-    throw new Error(`Failed to load graph for Title ${title}, Time ${timeScope}: ${err}`);
+  const base = import.meta.env.BASE_URL;
+  const metaFilename = `title-${title}-time-${timeScope}.meta.json`;
+  const singleFilename = `title-${title}-time-${timeScope}.json`;
+
+  // Check for split meta — must verify content-type to avoid SPA HTML fallback
+  const metaRes = await fetch(`${base}${metaFilename}`);
+  const metaContentType = metaRes.headers.get('content-type') || '';
+  const isSplit = metaRes.ok && !metaContentType.includes('text/html');
+
+if (isSplit) {
+    const meta = await metaRes.json() as {
+      parts: { file: string; nodes: number; links: number }[];
+    };
+
+    const parts = await Promise.all(
+      meta.parts.map((part) => fetchJson<RawGraph>(part.file))
+    );
+
+    const nodeMap = new Map<string, any>();
+    const linkSet = new Set<string>();        // ← new
+    const allLinks: any[] = [];
+
+    for (const part of parts) {
+      for (const node of part.nodes) {
+        if (!nodeMap.has(node.id)) nodeMap.set(node.id, node);
+      }
+      for (const link of part.links) {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        const key = `${sourceId}→${targetId}::${link.edge_type ?? ''}`;
+        if (!linkSet.has(key)) {             // ← deduplicate
+          linkSet.add(key);
+          allLinks.push(link);
+        }
+      }
+    }
+
+    return { nodes: Array.from(nodeMap.values()), links: allLinks };
   }
+
+
+  // Single file — fetchJson already guards against HTML responses
+  return await fetchJson<RawGraph>(singleFilename);
 }
+
+
+
 
 // ==============================
 // Cache Helper (MODIFIED - now async and loads on-demand)

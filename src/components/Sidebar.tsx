@@ -342,11 +342,6 @@ if (!localKeywords.trim()) {
   '54': 'National Park Service and Related Programs',
   '55': 'Science, Technology, and Related Matters (reserved)',
   '56': 'Wildlife (reserved)',
-  '05a':  'Government Organization and Employees (Appendix)',
-  '11a': 'Bankruptcy (Appendix)',
-  '18a': 'Crimes and Criminal Procedure (Appendix)',
-  '28a': 'Judiciary and Judicial Procedure (Appendix)',
-  '50a': 'War and National Defense (Appendix)',
 };
 
 

@@ -6,55 +6,78 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const publicDir = path.join(__dirname, '..', 'public');
-
-// Find all year-*.json files
 const files = fs.readdirSync(publicDir);
 
-const years = [];
-const processedYears = new Set();
+// Map: titleId -> Map(timeScope -> { kind, file/meta })
+const titleMap = new Map();
 
-for (const file of files) {
-  // Match year-YYYY.json
-  const yearMatch = file.match(/^year-(\d{4})\.json$/);
-  if (yearMatch) {
-    const year = yearMatch[1];
-    if (!processedYears.has(year)) {
-      years.push({
-        id: year,
-        kind: 'single',
-        file: file,
-        label: year
-      });
-      processedYears.add(year);
-    }
+const ensure = (id) => {
+  if (!titleMap.has(id)) titleMap.set(id, new Map());
+  return titleMap.get(id);
+};
+
+for (const f of files) {
+  // Skip part files from splits
+  if (f.includes('.part-')) continue;
+
+  // Single: title-26-time-2025.json
+  const singleMatch = f.match(/^title-([\w]+)-time-(\w+)\.json$/i);
+  if (singleMatch) {
+    const [, id, scope] = singleMatch;
+    ensure(id).set(scope, { kind: 'single', file: f });
     continue;
   }
 
-  // Match year-YYYY.meta.json (split files)
-  const metaMatch = file.match(/^year-(\d{4})\.meta\.json$/);
+  // Split meta: title-42-time-2025.meta.json
+  const metaMatch = f.match(/^title-([\w]+)-time-(\w+)\.meta\.json$/i);
   if (metaMatch) {
-    const year = metaMatch[1];
-    if (!processedYears.has(year)) {
-      years.push({
-        id: year,
-        kind: 'split',
-        meta: file,
-        label: year
-      });
-      processedYears.add(year);
-    }
+    const [, id, scope] = metaMatch;
+    ensure(id).set(scope, { kind: 'split', meta: f });
   }
 }
 
-// Sort by year
-years.sort((a, b) => a.id.localeCompare(b.id));
+// Sort: numeric first, then appendix (5a, 11a, etc.)
+const sortedIds = [...titleMap.keys()].sort((a, b) => {
+  const numA = parseInt(a);
+  const numB = parseInt(b);
+  if (numA !== numB) return numA - numB;
+  return a.localeCompare(b);
+});
 
-const manifest = {
-  version: 1,
-  years: years
-};
+const titles = sortedIds.map((id) => {
+  const scopes = titleMap.get(id);
+  const sortedScopes = [...scopes.keys()].sort();
 
-const manifestPath = path.join(publicDir, 'years-manifest.json');
+  // Build per-scope file/meta lookup
+  const scopeFiles = {};
+  const scopeMetas = {};
+  let dominantKind = 'single';
+
+  for (const [scope, entry] of scopes.entries()) {
+    if (entry.kind === 'split') {
+      scopeMetas[scope] = entry.meta;
+      dominantKind = 'split';
+    } else {
+      scopeFiles[scope] = entry.file;
+    }
+  }
+
+  return {
+    id,
+    kind: dominantKind,
+    timeScopes: sortedScopes,
+    ...(dominantKind === 'split'
+      ? { meta: scopeMetas }
+      : { file: scopeFiles }),
+  };
+});
+
+const manifest = { version: 2, titles };
+
+const manifestPath = path.join(publicDir, 'manifest.json');
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
-console.log(`Wrote ${manifestPath} with ${years.length} years`);
+console.log(`Wrote ${manifestPath} with ${titles.length} titles`);
+titles.forEach((t) => {
+  console.log(`  Title ${t.id} (${t.kind}): ${t.timeScopes.join(', ')}`);
+});
