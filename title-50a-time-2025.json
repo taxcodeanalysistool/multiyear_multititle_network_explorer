@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {
+      "id": "index:title-50,-appendix",
+      "name": "title-50,-appendix",
+      "node_type": "index",
+      "time": "2025",
+      "title": "TITLE 50, APPENDIX—WAR AND NATIONAL DEFENSE [ELIMINATED]",
+      "display_label": "Title 50,-appendix",
+      "index_heading": "",
+      "properties": {
+        "text": "",
+        "adjectives": null,
+        "verbs": null
+      }
+    }
+  ],
+  "links": []
+}

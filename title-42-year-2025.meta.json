@@ -1,0 +1,48 @@
+{
+  "title": "42",
+  "year": "2025",
+  "version": 1,
+  "format": "split-graph",
+  "parts": [
+    {
+      "file": "title-42-year-2025.part-01.json",
+      "nodes": 25587,
+      "links": 236784
+    },
+    {
+      "file": "title-42-year-2025.part-02.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-03.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-04.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-05.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-06.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-07.json",
+      "nodes": 25587,
+      "links": 0
+    },
+    {
+      "file": "title-42-year-2025.part-08.json",
+      "nodes": 25587,
+      "links": 0
+    }
+  ]
+}

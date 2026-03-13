@@ -2,6 +2,249 @@
   "version": 1,
   "titles": [
     {
+      "id": "01",
+      "name": "Title 01",
+      "description": "U.S. Code Title 01",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "02",
+      "name": "Title 02",
+      "description": "U.S. Code Title 02",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "03",
+      "name": "Title 03",
+      "description": "U.S. Code Title 03",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "04",
+      "name": "Title 04",
+      "description": "U.S. Code Title 04",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "05",
+      "name": "Title 05",
+      "description": "U.S. Code Title 05",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "05a",
+      "name": "Title 05a",
+      "description": "U.S. Code Title 05a",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "06",
+      "name": "Title 06",
+      "description": "U.S. Code Title 06",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "07",
+      "name": "Title 07",
+      "description": "U.S. Code Title 07",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "08",
+      "name": "Title 08",
+      "description": "U.S. Code Title 08",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "09",
+      "name": "Title 09",
+      "description": "U.S. Code Title 09",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "10",
+      "name": "Title 10",
+      "description": "U.S. Code Title 10",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "11",
+      "name": "Title 11",
+      "description": "U.S. Code Title 11",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "11a",
+      "name": "Title 11a",
+      "description": "U.S. Code Title 11a",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "12",
+      "name": "Title 12",
+      "description": "U.S. Code Title 12",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "13",
+      "name": "Title 13",
+      "description": "U.S. Code Title 13",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "14",
+      "name": "Title 14",
+      "description": "U.S. Code Title 14",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "15",
+      "name": "Title 15",
+      "description": "U.S. Code Title 15",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "16",
+      "name": "Title 16",
+      "description": "U.S. Code Title 16",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "17",
+      "name": "Title 17",
+      "description": "U.S. Code Title 17",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "18",
+      "name": "Title 18",
+      "description": "U.S. Code Title 18",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "18a",
+      "name": "Title 18a",
+      "description": "U.S. Code Title 18a",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "20",
+      "name": "Title 20",
+      "description": "U.S. Code Title 20",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "21",
+      "name": "Title 21",
+      "description": "U.S. Code Title 21",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "22",
+      "name": "Title 22",
+      "description": "U.S. Code Title 22",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "23",
+      "name": "Title 23",
+      "description": "U.S. Code Title 23",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "24",
+      "name": "Title 24",
+      "description": "U.S. Code Title 24",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "25",
+      "name": "Title 25",
+      "description": "U.S. Code Title 25",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
       "id": "26",
       "name": "Internal Revenue Code",
       "description": "U.S. Federal Tax Code",
@@ -19,6 +262,267 @@
         "2025"
       ],
       "timeScopeType": "year"
+    },
+    {
+      "id": "27",
+      "name": "Alcohol, Tobacco, and Firearms",
+      "description": "U.S. Code Title 27",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "year"
+    },
+    {
+      "id": "28",
+      "name": "Title 28",
+      "description": "U.S. Code Title 28",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "28a",
+      "name": "Title 28a",
+      "description": "U.S. Code Title 28a",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "29",
+      "name": "Title 29",
+      "description": "U.S. Code Title 29",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "30",
+      "name": "Title 30",
+      "description": "U.S. Code Title 30",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "31",
+      "name": "Title 31",
+      "description": "U.S. Code Title 31",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "32",
+      "name": "Title 32",
+      "description": "U.S. Code Title 32",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "33",
+      "name": "Title 33",
+      "description": "U.S. Code Title 33",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "34",
+      "name": "Title 34",
+      "description": "U.S. Code Title 34",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "35",
+      "name": "Title 35",
+      "description": "U.S. Code Title 35",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "36",
+      "name": "Title 36",
+      "description": "U.S. Code Title 36",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "37",
+      "name": "Title 37",
+      "description": "U.S. Code Title 37",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "38",
+      "name": "Title 38",
+      "description": "U.S. Code Title 38",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "39",
+      "name": "Title 39",
+      "description": "U.S. Code Title 39",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "40",
+      "name": "Title 40",
+      "description": "U.S. Code Title 40",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "41",
+      "name": "Title 41",
+      "description": "U.S. Code Title 41",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "42",
+      "name": "Title 42",
+      "description": "U.S. Code Title 42",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "43",
+      "name": "Title 43",
+      "description": "U.S. Code Title 43",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "44",
+      "name": "Title 44",
+      "description": "U.S. Code Title 44",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "45",
+      "name": "Title 45",
+      "description": "U.S. Code Title 45",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "46",
+      "name": "Title 46",
+      "description": "U.S. Code Title 46",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "47",
+      "name": "Title 47",
+      "description": "U.S. Code Title 47",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "48",
+      "name": "Title 48",
+      "description": "U.S. Code Title 48",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "49",
+      "name": "Title 49",
+      "description": "U.S. Code Title 49",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "50",
+      "name": "Title 50",
+      "description": "U.S. Code Title 50",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "50a",
+      "name": "Title 50a",
+      "description": "U.S. Code Title 50a",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "51",
+      "name": "Title 51",
+      "description": "U.S. Code Title 51",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "52",
+      "name": "Title 52",
+      "description": "U.S. Code Title 52",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
+    },
+    {
+      "id": "54",
+      "name": "Title 54",
+      "description": "U.S. Code Title 54",
+      "timeScopes": [
+        "2025"
+      ],
+      "timeScopeType": "custom"
     }
   ]
 }
