@@ -18,29 +18,55 @@ export class NetworkBuilder {
       const targetId = typeof link.target === 'string' ? link.target : link.target.id;
       const edgeType = link.edge_type;
       
-      if (!this.adjacencyMap.has(sourceId)) {
-        this.adjacencyMap.set(sourceId, []);
-      }
-      if (!this.adjacencyMap.has(targetId)) {
-        this.adjacencyMap.set(targetId, []);
-      }
+      if (!this.adjacencyMap.has(sourceId)) this.adjacencyMap.set(sourceId, []);
+      if (!this.adjacencyMap.has(targetId)) this.adjacencyMap.set(targetId, []);
       
       this.adjacencyMap.get(sourceId)!.push({ neighborId: targetId, edgeType });
       this.adjacencyMap.get(targetId)!.push({ neighborId: sourceId, edgeType });
     });
   }
 
-  searchNodes(searchTerms: string[], searchFields: string[], logic: 'AND' | 'OR' = 'OR'): Set<string> {
+  // ← CHANGED: added useRegex param; pre-compiles patterns once before iterating nodes
+  searchNodes(
+    searchTerms: string[],
+    searchFields: string[],
+    logic: 'AND' | 'OR' = 'OR',
+    useRegex: boolean = false
+  ): Set<string> {
     const matchedIds = new Set<string>();
-    const normalizedTerms = searchTerms.map(t => t.toLowerCase().trim());
+
+    // For plain text: normalize to lowercase for case-insensitive includes().
+    // For regex: keep original — case insensitivity is handled by the 'i' flag.
+    const normalizedTerms = useRegex
+      ? searchTerms.map(t => t.trim())
+      : searchTerms.map(t => t.toLowerCase().trim());
+
+    // Pre-compile regex patterns once (not once per node) for performance.
+    // Invalid patterns are silently dropped — validation already happened in Sidebar.
+    const regexPatterns: (RegExp | null)[] = useRegex
+      ? normalizedTerms.map(term => {
+          try { return new RegExp(term, 'i'); }
+          catch { return null; }
+        })
+      : [];
+
+    // Unified matcher: returns true if the term matches any searchable value
+    const termMatches = (termIdx: number, searchableValues: string[]): boolean => {
+      if (useRegex) {
+        const re = regexPatterns[termIdx];
+        return re ? searchableValues.some(v => re.test(v)) : false;
+      }
+      const term = normalizedTerms[termIdx];
+      return searchableValues.some(v => v.includes(term));
+    };
 
     this.allNodes.forEach(node => {
       const searchableValues: string[] = [];
-      
+
       searchFields.forEach(field => {
         let value: any;
-        
-        switch(field) {
+
+        switch (field) {
           case 'text':
             value = node.properties?.text || node.text || node.section_text || node.index_heading;
             break;
@@ -63,7 +89,8 @@ export class NetworkBuilder {
             if (node.properties && typeof node.properties === 'object') {
               Object.values(node.properties).forEach(propValue => {
                 if (typeof propValue === 'string') {
-                  searchableValues.push(propValue.toLowerCase());
+                  // Respect useRegex: skip lowercasing when regex mode is on
+                  searchableValues.push(useRegex ? propValue : propValue.toLowerCase());
                 }
               });
             }
@@ -73,20 +100,17 @@ export class NetworkBuilder {
         }
 
         if (value !== null && value !== undefined) {
-          searchableValues.push(String(value).toLowerCase());
+          // Respect useRegex: skip lowercasing when regex mode is on
+          searchableValues.push(useRegex ? String(value) : String(value).toLowerCase());
         }
       });
 
       if (logic === 'OR') {
-        const shouldMatch = normalizedTerms.some(term => 
-          searchableValues.some(searchableValue => searchableValue.includes(term))
-        );
+        const shouldMatch = normalizedTerms.some((_, idx) => termMatches(idx, searchableValues));
         if (shouldMatch) matchedIds.add(node.id);
       } else {
-        const allTermsMatch = normalizedTerms.every(term => 
-          searchableValues.some(searchableValue => searchableValue.includes(term))
-        );
-        if (allTermsMatch) matchedIds.add(node.id);
+        const allMatch = normalizedTerms.every((_, idx) => termMatches(idx, searchableValues));
+        if (allMatch) matchedIds.add(node.id);
       }
     });
 
@@ -112,7 +136,7 @@ export class NetworkBuilder {
           ? neighbors.filter(n => allowedEdgeTypes.includes(n.edgeType))
           : neighbors;
         
-        const limitedNeighbors = maxNeighborsPerNode > 0 
+        const limitedNeighbors = maxNeighborsPerNode > 0
           ? filteredNeighbors.slice(0, maxNeighborsPerNode)
           : filteredNeighbors;
 
@@ -131,18 +155,24 @@ export class NetworkBuilder {
     return expanded;
   }
 
-  buildNetwork(state: NetworkBuilderState, searchLogic: 'AND' | 'OR' = 'OR', nodeRankingMode: 'global' | 'subgraph' = 'global'): FilteredGraph {
+  // ← CHANGED: added useRegex as 4th param, passed through to searchNodes
+  buildNetwork(
+    state: NetworkBuilderState,
+    searchLogic: 'AND' | 'OR' = 'OR',
+    nodeRankingMode: 'global' | 'subgraph' = 'global',
+    useRegex: boolean = false
+  ): FilteredGraph {
     let candidateNodeIds = new Set<string>();
     let seedNodeIds = new Set<string>();
 
     // Step 1: Keyword search
     if (state.searchTerms.length > 0 && state.searchFields.length > 0) {
-      seedNodeIds = this.searchNodes(state.searchTerms, state.searchFields, searchLogic);
+      seedNodeIds = this.searchNodes(state.searchTerms, state.searchFields, searchLogic, useRegex);
 
       if (seedNodeIds.size === 0) {
         return { nodes: [], links: [], truncated: false, matchedCount: 0 };
       }
-      
+
       // Step 1b: Expand from seeds
       if (state.expansionDepth > 0) {
         candidateNodeIds = this.expandFromSeeds(
@@ -151,8 +181,7 @@ export class NetworkBuilder {
           state.maxNodesPerExpansion,
           state.allowedEdgeTypes
         );
-        
-        // Filter expanded nodes by type
+
         if (state.allowedNodeTypes.length > 0) {
           candidateNodeIds = new Set(
             [...candidateNodeIds].filter(id => {
@@ -176,30 +205,28 @@ export class NetworkBuilder {
         [...seedNodeIds].filter(id => {
           const node = this.allNodes.find(n => n.id === id);
           if (!node) return false;
-          return state.allowedNodeTypes.length > 0 && 
+          return state.allowedNodeTypes.length > 0 &&
                  state.allowedNodeTypes.includes(node.node_type);
         })
       );
-      
+
       if (seedsAfterFilter.size === 0) {
         return { nodes: [], links: [], truncated: false, matchedCount: 0 };
       }
-      
+
       candidateNodeIds = new Set(
-        [...candidateNodeIds].filter(id => 
+        [...candidateNodeIds].filter(id =>
           seedsAfterFilter.has(id) || !seedNodeIds.has(id)
         )
       );
-      
+
       seedNodeIds = seedsAfterFilter;
     }
 
     // Step 3: Build candidate node map
     const candidateNodeMap = new Map<string, GraphNode>();
     this.allNodes.forEach(n => {
-      if (candidateNodeIds.has(n.id)) {
-        candidateNodeMap.set(n.id, n);
-      }
+      if (candidateNodeIds.has(n.id)) candidateNodeMap.set(n.id, n);
     });
 
     const candidateNodes = Array.from(candidateNodeMap.values());
@@ -208,10 +235,10 @@ export class NetworkBuilder {
     const candidateLinks = this.allLinks.filter(link => {
       const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
       const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-      
-      const edgeTypeMatch = state.allowedEdgeTypes.length > 0 && 
-                           state.allowedEdgeTypes.includes(link.edge_type);
-      
+
+      const edgeTypeMatch = state.allowedEdgeTypes.length > 0 &&
+                            state.allowedEdgeTypes.includes(link.edge_type);
+
       return edgeTypeMatch && candidateNodeMap.has(sourceId) && candidateNodeMap.has(targetId);
     });
 
@@ -228,8 +255,8 @@ export class NetworkBuilder {
       candidateNodes
         .filter(n => {
           const hasEdges = nodesWithEdges.has(n.id);
-          const typeMatch = state.allowedNodeTypes.length === 0 || 
-                           state.allowedNodeTypes.includes(n.node_type);
+          const typeMatch = state.allowedNodeTypes.length === 0 ||
+                            state.allowedNodeTypes.includes(n.node_type);
           return hasEdges && typeMatch;
         })
         .map(n => n.id)
@@ -243,19 +270,19 @@ export class NetworkBuilder {
     if (truncated) {
       if (nodeRankingMode === 'subgraph') {
         const nodeDegrees = new Map<string, number>();
-        
+
         candidateLinks.forEach(link => {
           const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
           const targetId = typeof link.target === 'string' ? link.target : link.target.id;
           nodeDegrees.set(sourceId, (nodeDegrees.get(sourceId) || 0) + 1);
           nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
         });
-        
+
         const topNodes = Array.from(connectedNodeIds)
           .filter(nodeId => nodeDegrees.has(nodeId))
           .sort((a, b) => (nodeDegrees.get(b) || 0) - (nodeDegrees.get(a) || 0))
           .slice(0, state.maxTotalNodes);
-        
+
         finalNodeIds = new Set(topNodes);
       } else {
         finalNodeIds = new Set(this.selectTopNodesByDegree(connectedNodeIds, state.maxTotalNodes));
@@ -268,42 +295,38 @@ export class NetworkBuilder {
     const selectedNodeMap = new Map<string, GraphNode>();
     this.allNodes.forEach(n => {
       if (finalNodeIds.has(n.id)) {
-        const typeMatch = state.allowedNodeTypes.length === 0 || 
-                         state.allowedNodeTypes.includes(n.node_type);
-        if (typeMatch) {
-          selectedNodeMap.set(n.id, n);
-        }
+        const typeMatch = state.allowedNodeTypes.length === 0 ||
+                          state.allowedNodeTypes.includes(n.node_type);
+        if (typeMatch) selectedNodeMap.set(n.id, n);
       }
     });
 
     const nodes = Array.from(selectedNodeMap.values());
 
     const links = candidateLinks
-  .filter(link => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    return selectedNodeMap.has(sourceId) && selectedNodeMap.has(targetId);
-  })
-  .map(link => {
-    // Create fresh link objects with string IDs to avoid D3 mutation issues
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    
-    return {
-      source: sourceId,  // ← Always return string ID
-      target: targetId,  // ← Always return string ID
-      action: link.action,
-      edge_type: link.edge_type,
-      time: link.time,
-      usc_title: link.usc_title,
-      source_title: link.source_title,
-      weight: link.weight,
-      definition: link.definition,
-      location: link.location,
-      timestamp: link.timestamp,
-    };
-  });
+      .filter(link => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        return selectedNodeMap.has(sourceId) && selectedNodeMap.has(targetId);
+      })
+      .map(link => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
 
+        return {
+          source: sourceId,
+          target: targetId,
+          action: link.action,
+          edge_type: link.edge_type,
+          time: link.time,
+          usc_title: link.usc_title,
+          source_title: link.source_title,
+          weight: link.weight,
+          definition: link.definition,
+          location: link.location,
+          timestamp: link.timestamp,
+        };
+      });
 
     // Step 8: Compute colors by node type and degree
     const nodeDegree = new Map<string, number>();
@@ -325,19 +348,13 @@ export class NetworkBuilder {
     const sectionColorScale = (t: number) => {
       const r1 = 0x9B, g1 = 0x96, b1 = 0xC9;
       const r2 = 0x41, g2 = 0x37, b2 = 0x8F;
-      const r = Math.round(r1 + (r2 - r1) * t);
-      const g = Math.round(g1 + (g2 - g1) * t);
-      const b = Math.round(b1 + (b2 - b1) * t);
-      return `rgb(${r}, ${g}, ${b})`;
+      return `rgb(${Math.round(r1 + (r2 - r1) * t)}, ${Math.round(g1 + (g2 - g1) * t)}, ${Math.round(b1 + (b2 - b1) * t)})`;
     };
 
     const entityConceptColorScale = (t: number) => {
       const r1 = 0xF9, g1 = 0xD9, b1 = 0x9B;
       const r2 = 0xF0, g2 = 0xA7, b2 = 0x34;
-      const r = Math.round(r1 + (r2 - r1) * t);
-      const g = Math.round(g1 + (g2 - g1) * t);
-      const b = Math.round(b1 + (b2 - b1) * t);
-      return `rgb(${r}, ${g}, ${b})`;
+      return `rgb(${Math.round(r1 + (r2 - r1) * t)}, ${Math.round(g1 + (g2 - g1) * t)}, ${Math.round(b1 + (b2 - b1) * t)})`;
     };
 
     nodes.forEach(node => {
@@ -356,22 +373,17 @@ export class NetworkBuilder {
       node.baseColor = color;
     });
 
-    return {
-      nodes,
-      links,
-      truncated,
-      matchedCount: totalMatches
-    };
+    return { nodes, links, truncated, matchedCount: totalMatches };
   }
 
   private selectTopNodesByDegree(nodeIds: Set<string>, maxNodes: number): string[] {
     const nodeDegrees = new Map<string, number>();
-    
+
     nodeIds.forEach(nodeId => {
       const neighbors = this.adjacencyMap.get(nodeId) || [];
       nodeDegrees.set(nodeId, neighbors.length);
     });
-    
+
     return Array.from(nodeDegrees.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, maxNodes)

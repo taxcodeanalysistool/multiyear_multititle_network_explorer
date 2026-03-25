@@ -91,6 +91,7 @@ function App() {
   const [tagClusters] = useState<TagCluster[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [bottomUpSearchKeywords, setBottomUpSearchKeywords] = useState('');
+  const [useRegex, setUseRegex] = useState(false);
   const [totalBeforeLimit, setTotalBeforeLimit] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
@@ -123,6 +124,7 @@ function App() {
     searchFields: string[];
     searchLogic: 'AND' | 'OR';
     nodeRankingMode: 'global' | 'subgraph';
+    useRegex: boolean;
   } | null>(null);
 
   const bottomUpRunIdRef = useRef(0);
@@ -400,114 +402,122 @@ const getOtherNodeId = (rel: any, selectedId: string): string | null => {
     setBuilder(new NetworkBuilder(scopedFullGraph.nodes, scopedFullGraph.links));
   }, [scopedFullGraph.nodes, scopedFullGraph.links]);
 
-  const executeBottomUpSearch = useCallback(
-    async (
-      params: {
-        keywords: string;
-        expansionDegree: number;
-        maxNodes: number;
-        nodeTypes: string[];
-        edgeTypes: string[];
-        searchFields: string[];
-        searchLogic: 'AND' | 'OR';
-        nodeRankingMode: 'global' | 'subgraph';
-      },
-      opts?: { preservePreviousGraph?: boolean }
-    ) => {
-      if (!builder || params.searchFields.length === 0) return;
+const executeBottomUpSearch = useCallback(
+  async (
+    params: {
+      keywords: string;
+      expansionDegree: number;
+      maxNodes: number;
+      nodeTypes: string[];
+      edgeTypes: string[];
+      searchFields: string[];
+      searchLogic: 'AND' | 'OR';
+      nodeRankingMode: 'global' | 'subgraph';
+      useRegex: boolean;
+    },
+    opts?: { preservePreviousGraph?: boolean }
+  ) => {
+    if (!builder || params.searchFields.length === 0) return;
 
-      const runId = ++bottomUpRunIdRef.current;
+    const runId = ++bottomUpRunIdRef.current;
 
-      if (!opts?.preservePreviousGraph) setLoading(true);
+    if (!opts?.preservePreviousGraph) setLoading(true);
 
-      setRelationships([]);
-      setTopDownGraphInfo(null);
+    setRelationships([]);
+    setTopDownGraphInfo(null);
 
-      try {
-        const terms = params.keywords
-          .split(',')
-          .map((t) => t.trim())
-          .filter((t) => t);
+    try {
+      const terms = params.useRegex
+        ? [params.keywords.trim()]
+        : params.keywords
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t) => t);
 
-        const builderState: NetworkBuilderState = {
-          searchTerms: terms,
-          searchFields: params.searchFields,
-          allowedNodeTypes: params.nodeTypes as ('index' | 'entity' | 'concept')[],
-          allowedEdgeTypes: params.edgeTypes as ('definition' | 'reference' | 'hierarchy')[],
-          allowedTitles: [],
-          allowedSections: [],
-          seedNodeIds: [],
-          expansionDepth: params.expansionDegree,
-          maxNodesPerExpansion: 100,
-          maxTotalNodes: params.maxNodes,
-        };
+      const builderState: NetworkBuilderState = {
+        searchTerms: terms,
+        searchFields: params.searchFields,
+        allowedNodeTypes: params.nodeTypes as ('index' | 'entity' | 'concept')[],
+        allowedEdgeTypes: params.edgeTypes as ('definition' | 'reference' | 'hierarchy')[],
+        allowedTitles: [],
+        allowedSections: [],
+        seedNodeIds: [],
+        expansionDepth: params.expansionDegree,
+        maxNodesPerExpansion: 100,
+        maxTotalNodes: params.maxNodes,
+      };
 
-        const filtered = builder.buildNetwork(builderState, params.searchLogic, params.nodeRankingMode);
+      const filtered = builder.buildNetwork(
+        builderState,
+        params.searchLogic,
+        params.nodeRankingMode,
+        params.useRegex,
+      );
 
-        if (runId !== bottomUpRunIdRef.current) return;
+      if (runId !== bottomUpRunIdRef.current) return;
 
-        let finalLinks = filtered.links;
-        let linksTruncated = false;
+      let finalLinks = filtered.links;
+      let linksTruncated = false;
 
-        if (finalLinks.length > limit) {
-          const nodeDegrees = new Map<string, number>();
-          filtered.links.forEach((link) => {
-            const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-            const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-            nodeDegrees.set(sourceId, (nodeDegrees.get(sourceId) || 0) + 1);
-            nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
-          });
-
-          finalLinks = [...filtered.links]
-            .sort((a, b) => {
-              const sourceA = typeof a.source === 'string' ? a.source : a.source.id;
-              const targetA = typeof a.target === 'string' ? a.target : a.target.id;
-              const sourceB = typeof b.source === 'string' ? b.source : b.source.id;
-              const targetB = typeof b.target === 'string' ? b.target : b.target.id;
-
-              const degreeA = (nodeDegrees.get(sourceA) || 0) + (nodeDegrees.get(targetA) || 0);
-              const degreeB = (nodeDegrees.get(sourceB) || 0) + (nodeDegrees.get(targetB) || 0);
-
-              return degreeB - degreeA;
-            })
-            .slice(0, limit);
-
-          linksTruncated = true;
-        }
-
-        const nodesInFinalLinks = new Set<string>();
-        finalLinks.forEach((link) => {
+      if (finalLinks.length > limit) {
+        const nodeDegrees = new Map<string, number>();
+        filtered.links.forEach((link) => {
           const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
           const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-          nodesInFinalLinks.add(sourceId);
-          nodesInFinalLinks.add(targetId);
+          nodeDegrees.set(sourceId, (nodeDegrees.get(sourceId) || 0) + 1);
+          nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
         });
 
-        const finalNodes = filtered.nodes.filter((n) => nodesInFinalLinks.has(n.id));
+        finalLinks = [...filtered.links]
+          .sort((a, b) => {
+            const sourceA = typeof a.source === 'string' ? a.source : a.source.id;
+            const targetA = typeof a.target === 'string' ? a.target : a.target.id;
+            const sourceB = typeof b.source === 'string' ? b.source : b.source.id;
+            const targetB = typeof b.target === 'string' ? b.target : b.target.id;
 
-        setDisplayGraph({
-          nodes: finalNodes,
-          links: finalLinks,
-          truncated: filtered.truncated || linksTruncated,
-          matchedCount: filtered.matchedCount,
-        });
+            const degreeA = (nodeDegrees.get(sourceA) || 0) + (nodeDegrees.get(targetA) || 0);
+            const degreeB = (nodeDegrees.get(sourceB) || 0) + (nodeDegrees.get(targetB) || 0);
 
-        setDisplayGraphInfo({
-          nodeCount: finalNodes.length,
-          linkCount: finalLinks.length,
-          truncated: filtered.truncated || linksTruncated,
-          matchedCount: filtered.matchedCount,
-        });
+            return degreeB - degreeA;
+          })
+          .slice(0, limit);
 
-        setIsLoadingNodeRelationships(false); 
-      } catch (error) {
-        console.error('Error building network:', error);
-      } finally {
-        if (!opts?.preservePreviousGraph) setLoading(false);
+        linksTruncated = true;
       }
-    },
-    [builder, limit]
-  );
+
+      const nodesInFinalLinks = new Set<string>();
+      finalLinks.forEach((link) => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        nodesInFinalLinks.add(sourceId);
+        nodesInFinalLinks.add(targetId);
+      });
+
+      const finalNodes = filtered.nodes.filter((n) => nodesInFinalLinks.has(n.id));
+
+      setDisplayGraph({
+        nodes: finalNodes,
+        links: finalLinks,
+        truncated: filtered.truncated || linksTruncated,
+        matchedCount: filtered.matchedCount,
+      });
+
+      setDisplayGraphInfo({
+        nodeCount: finalNodes.length,
+        linkCount: finalLinks.length,
+        truncated: filtered.truncated || linksTruncated,
+        matchedCount: filtered.matchedCount,
+      });
+
+      setIsLoadingNodeRelationships(false);
+    } catch (error) {
+      console.error('Error building network:', error);
+    } finally {
+      if (!opts?.preservePreviousGraph) setLoading(false);
+    }
+  },
+  [builder, limit]
+);
 
   useEffect(() => {
     if (buildMode !== 'bottomUp') return;
@@ -1009,6 +1019,7 @@ try {
     searchFields: string[];
     searchLogic: 'AND' | 'OR';
     nodeRankingMode: 'global' | 'subgraph';
+    useRegex: boolean;
   }) => {
     if (!builder) {
       alert('Network builder is not ready. Please wait for the data to load.');
@@ -1032,6 +1043,7 @@ try {
   edgeTypes: ['definition', 'reference', 'hierarchy'],  // ← Always search all edge types
 };
 
+    setUseRegex(params.useRegex);
     setBottomUpSearchParams(effective);
     setBottomUpSearchKeywords(params.keywords);
     setBuildMode('bottomUp');
@@ -1069,6 +1081,7 @@ const handleResetToTopDown = useCallback(() => {
   setSelectedNode(null);
   setActorRelationships([]);
   setRelationships([]);
+  setUseRegex(false);
   setIsInitialized(false);   // ← forces the top-down useEffect to re-run
   setTimeout(() => setIsInitialized(true), 0);  // ← re-enables it next tick
 }, []);
@@ -1200,6 +1213,7 @@ const tableViewData = useMemo(() => {
             topDownGraphInfo={topDownGraphInfo}
             currentGraphData={currentGraphData}
             networkGraphRef={networkGraphRef}
+  	    exportNodes={tableViewData.nodes}
           />
         </div>
 
@@ -1338,6 +1352,7 @@ const tableViewData = useMemo(() => {
     highlightTerm={openDocIndex === -1 ? null : selectedNodeDisplayLabel}
     secondaryHighlightTerm={null}
     searchKeywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
+    useRegex={useRegex}
     timeScope={timeScope}
     onTimeScopeChange={switchTimeScope}
     onClose={() => { setOpenDocId(null); setOpenDocIndex(null); }}

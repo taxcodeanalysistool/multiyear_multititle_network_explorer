@@ -3,23 +3,15 @@ import type { GraphNode, GraphLink, TimeScope, SelectedNode } from '../types';
 import { exportGraphData, exportGraphImage } from '../utils/exportUtils';
 
 interface ExportControlsProps {
-  // Graph data
   graphData: { nodes: GraphNode[]; links: GraphLink[] } | null;
-  
-  // Metadata for export
+  exportNodes?: GraphNode[];
   buildMode: 'topDown' | 'bottomUp';
   timeScope: TimeScope;
   selectedTitle: string;
   selectedNode: SelectedNode;
-  
-  // Filtering info
   filterTypes?: string[];
   searchTerm?: string;
-  
-  // SVG ref for PNG export
   svgElement: SVGSVGElement | null;
-  
-  // Display info
   displayGraphInfo?: {
     nodeCount: number;
     linkCount: number;
@@ -30,6 +22,7 @@ interface ExportControlsProps {
 
 export default function ExportControls({
   graphData,
+  exportNodes,
   buildMode,
   timeScope,
   selectedTitle,
@@ -42,9 +35,16 @@ export default function ExportControls({
   const [isExporting, setIsExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'separate' | 'edgelist'>('separate');
 
+  const effectiveNodes = exportNodes ?? graphData?.nodes ?? [];
+  const effectiveLinks = graphData?.links ?? [];
+
+  const hasData = effectiveNodes.length > 0;
+  const nodeCount = effectiveNodes.length;
+  const linkCount = effectiveLinks.length;
+
   const handleExportCSV = async () => {
-    if (!graphData || graphData.nodes.length === 0) {
-      alert('No graph data to export. Please load or search for data first.');
+    if (effectiveNodes.length === 0) {
+      alert('No data to export. Please load or search for data first.');
       return;
     }
 
@@ -58,16 +58,11 @@ export default function ExportControls({
         searchTerm: searchTerm || null,
       };
 
-      exportGraphData(graphData, {
-        format: exportFormat,
-        ...metadata,
-      });
+      exportGraphData(
+        { nodes: effectiveNodes, links: effectiveLinks },
+        { format: exportFormat, ...metadata }
+      );
 
-      // Success feedback
-      const nodeCount = graphData.nodes.length;
-      const linkCount = graphData.links.length;
-      
-      // Show different message for truncated data
       if (displayGraphInfo?.truncated) {
         alert(
           `✅ Exported ${nodeCount} nodes and ${linkCount} links.\n\n` +
@@ -97,13 +92,12 @@ export default function ExportControls({
         title: selectedTitle,
         timeScope,
         buildMode,
-        nodeCount: graphData?.nodes.length || 0,
+        nodeCount: effectiveNodes.length,
         selectedNode,
       };
 
       exportGraphImage(svgElement, metadata);
 
-      // Success feedback
       setTimeout(() => {
         alert('✅ PNG export started! Check your downloads.');
       }, 100);
@@ -115,19 +109,20 @@ export default function ExportControls({
     }
   };
 
-  const hasData = graphData && graphData.nodes.length > 0;
-  const nodeCount = graphData?.nodes.length || 0;
-  const linkCount = graphData?.links.length || 0;
-
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-sm font-semibold text-gray-300 mb-2">Export Data</h3>
-        
+
         {/* Export info */}
         {hasData && (
           <div className="text-xs text-gray-400 mb-3 bg-gray-800 p-2 rounded">
             <div>📊 {nodeCount} nodes, {linkCount} links</div>
+            {exportNodes && exportNodes.length > (graphData?.nodes.length ?? 0) && (
+              <div className="text-blue-400 mt-1">
+                ✚ Includes {exportNodes.length - (graphData?.nodes.length ?? 0)} isolated nodes
+              </div>
+            )}
             {displayGraphInfo?.truncated && (
               <div className="text-yellow-400 mt-1">
                 ⚠️ Showing {nodeCount} of {displayGraphInfo.matchedCount} nodes
@@ -198,7 +193,7 @@ export default function ExportControls({
             Load graph data or perform a search to enable export.
           </p>
         )}
-        
+
         {hasData && (
           <div className="text-xs text-gray-400 mt-3 space-y-1">
             <div>💡 CSV includes metadata and empty metric columns for future analysis</div>

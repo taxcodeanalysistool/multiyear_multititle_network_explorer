@@ -9,6 +9,7 @@ interface DocumentModalProps {
   highlightTerm: string | null;
   secondaryHighlightTerm?: string | null;
   searchKeywords?: string;
+  useRegex?: boolean;           // ← ADD
   timeScope: TimeScope;
   onTimeScopeChange: (scope: TimeScope) => void;
   onClose: () => void;
@@ -41,6 +42,7 @@ export default function DocumentModal({
   highlightTerm,
   secondaryHighlightTerm,
   searchKeywords,
+  useRegex = false,             // ← ADD
   timeScope,
   onTimeScopeChange,
   onClose,
@@ -125,6 +127,7 @@ export default function DocumentModal({
     matchRefs.current.clear();
   }, [docId, timeScope]);
 
+  // ← CHANGED: searchPatterns section branches on useRegex
   useEffect(() => {
     if (!documentText) return;
 
@@ -136,12 +139,22 @@ export default function DocumentModal({
     const secondaryPatterns: string[] = [];
 
     if (searchKeywords) {
-      searchKeywords.split(',').forEach((keyword) => {
-        const trimmed = keyword.trim();
-        if (trimmed.length > 0) {
-          searchPatterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      if (useRegex) {
+        // Use the whole string as a single regex pattern — don't split or escape
+        try {
+          new RegExp(searchKeywords.trim(), 'gi'); // validate first
+          searchPatterns.push(searchKeywords.trim());
+        } catch {
+          // invalid regex, skip
         }
-      });
+      } else {
+        searchKeywords.split(',').forEach((keyword) => {
+          const trimmed = keyword.trim();
+          if (trimmed.length > 0) {
+            searchPatterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+          }
+        });
+      }
     }
 
     if (highlightTerm) {
@@ -188,7 +201,7 @@ export default function DocumentModal({
 
     positions.sort((a, b) => a.index - b.index);
     setMatchPositions(positions);
-  }, [documentText, highlightTerm, secondaryHighlightTerm, searchKeywords]);
+  }, [documentText, highlightTerm, secondaryHighlightTerm, searchKeywords, useRegex]);
 
   const scrollToMatch = (index: number) => {
     const element = matchRefs.current.get(index);
@@ -197,11 +210,13 @@ export default function DocumentModal({
     }
   };
 
+  // ← CHANGED: accepts isRegex param; uses RegExp.test() to identify search matches in regex mode
   const highlightText = (
     text: string,
     term: string | null,
     secondaryTerm: string | null,
     searchTerms: string | null,
+    isRegex: boolean = false,
   ): JSX.Element[] => {
     if (!term && !secondaryTerm && !searchTerms) {
       return [<span key="0">{text}</span>];
@@ -213,14 +228,28 @@ export default function DocumentModal({
       const primaryWords = new Set<string>();
       const secondaryWords = new Set<string>();
 
+      // Pre-compile a regex for identifying search matches in regex mode
+      // (plain mode uses searchWords set instead)
+      let searchRegexForMatching: RegExp | null = null;
+
       if (searchTerms) {
-        searchTerms.split(',').forEach((keyword) => {
-          const trimmed = keyword.trim();
-          if (trimmed.length > 0) {
-            searchWords.add(trimmed.toLowerCase());
-            patterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (isRegex) {
+          try {
+            // Wrap in non-capturing group so alternation doesn't bleed into surrounding patterns
+            searchRegexForMatching = new RegExp(`^(?:${searchTerms.trim()})$`, 'i');
+            patterns.push(searchTerms.trim());
+          } catch {
+            // invalid regex — skip highlighting rather than crash
           }
-        });
+        } else {
+          searchTerms.split(',').forEach((keyword) => {
+            const trimmed = keyword.trim();
+            if (trimmed.length > 0) {
+              searchWords.add(trimmed.toLowerCase());
+              patterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            }
+          });
+        }
       }
 
       if (term) {
@@ -252,11 +281,18 @@ export default function DocumentModal({
         const partStart = currentIndex;
         currentIndex += part.length;
 
+        // Determine if this part is a search match
         let isSearchMatch = false;
-        for (const searchWord of searchWords) {
-          if (partLower.includes(searchWord) || searchWord.includes(partLower)) {
-            isSearchMatch = true;
-            break;
+        if (searchRegexForMatching) {
+          // Regex mode: test the captured part directly against the pattern
+          isSearchMatch = searchRegexForMatching.test(part);
+        } else {
+          // Plain mode: check against the word set
+          for (const searchWord of searchWords) {
+            if (partLower.includes(searchWord) || searchWord.includes(partLower)) {
+              isSearchMatch = true;
+              break;
+            }
           }
         }
 
@@ -339,12 +375,12 @@ export default function DocumentModal({
 
             {document && (document.title || document.part || document.chapter || document.subchapter || document.section) && (
               <div className="space-y-1 text-sm text-gray-300 mb-3 font-mono">
-                {document.title     && <div><span className="text-gray-500">Title:</span> {document.title}</div>}
-                {document.subtitle  && <div><span className="text-gray-500">Subtitle:</span> {document.subtitle}</div>}
-                {document.part      && <div><span className="text-gray-500">Part:</span> {document.part}</div>}
-                {document.chapter   && <div><span className="text-gray-500">Chapter:</span> {document.chapter}</div>}
+                {document.title      && <div><span className="text-gray-500">Title:</span> {document.title}</div>}
+                {document.subtitle   && <div><span className="text-gray-500">Subtitle:</span> {document.subtitle}</div>}
+                {document.part       && <div><span className="text-gray-500">Part:</span> {document.part}</div>}
+                {document.chapter    && <div><span className="text-gray-500">Chapter:</span> {document.chapter}</div>}
                 {document.subchapter && <div><span className="text-gray-500">Subchapter:</span> {document.subchapter}</div>}
-                {document.section   && <div><span className="text-gray-500">Section:</span> {document.section}</div>}
+                {document.section    && <div><span className="text-gray-500">Section:</span> {document.section}</div>}
                 {document.subsection && <div><span className="text-gray-500">Subsection:</span> {document.subsection}</div>}
                 {document.index_heading && document.index_heading.trim() !== '' && (
                   <div><span className="text-gray-500">Heading:</span> {document.index_heading}</div>
@@ -370,9 +406,9 @@ export default function DocumentModal({
                   key={idx}
                   onClick={() => scrollToMatch(match.index)}
                   className={`absolute w-3 h-3 rounded-full transform transition-all hover:scale-150 pointer-events-auto ${
-                    match.type === 'search'    ? 'bg-green-300 hover:bg-green-200' :
-                    match.type === 'primary'   ? 'bg-yellow-400 hover:bg-yellow-300' :
-                                                 'bg-orange-300 hover:bg-orange-200'
+                    match.type === 'search'  ? 'bg-green-300 hover:bg-green-200' :
+                    match.type === 'primary' ? 'bg-yellow-400 hover:bg-yellow-300' :
+                                               'bg-orange-300 hover:bg-orange-200'
                   }`}
                   style={{ top: `${match.percentage}%` }}
                   title={`${match.term} (${idx + 1}/${matchPositions.length})`}
@@ -411,7 +447,8 @@ export default function DocumentModal({
           {!loading && !error && !nodeNotFound && documentText && documentText.trim() !== '' && (
             <div className="prose prose-invert max-w-none">
               <div className="whitespace-pre-wrap text-gray-300 leading-relaxed font-mono text-sm">
-                {highlightText(documentText, highlightTerm, secondaryHighlightTerm || null, searchKeywords || null)}
+                {/* ← CHANGED: pass useRegex as 5th argument */}
+                {highlightText(documentText, highlightTerm, secondaryHighlightTerm || null, searchKeywords || null, useRegex)}
               </div>
             </div>
           )}
@@ -423,7 +460,7 @@ export default function DocumentModal({
             {searchKeywords && (
               <span>
                 <span className="inline-block bg-green-300 text-black font-semibold px-2 py-0.5 rounded text-xs mr-1">
-                  Search keywords
+                  {useRegex ? `/${searchKeywords}/` : 'Search keywords'}
                 </span>
               </span>
             )}

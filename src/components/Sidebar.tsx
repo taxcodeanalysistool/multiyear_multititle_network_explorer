@@ -9,7 +9,9 @@ import type {
   TagCluster, 
   SelectedNode, 
   TimeScope,
-  Manifest,      // ← NEW: Import Manifest type
+  Manifest,
+  GraphNode,
+  GraphLink,
 } from '../types';
 
 interface SidebarProps {
@@ -40,6 +42,7 @@ interface SidebarProps {
   onStartNewNetwork?: () => void;
   onResetToTopDown?: () => void;
   timeScope: TimeScope;
+  exportNodes?: GraphNode[];
   onTimeScopeChange: (scope: TimeScope) => void;
   currentGraphData?: { nodes: GraphNode[]; links: GraphLink[] } | null;
   networkGraphRef?: React.RefObject<{ getSvgElement: () => SVGSVGElement | null }>;
@@ -66,6 +69,7 @@ interface SidebarProps {
     searchFields: string[];
     searchLogic: 'AND' | 'OR';
     nodeRankingMode: 'global' | 'subgraph';
+    useRegex: boolean;
   }) => void;
   displayGraphInfo?: {
     nodeCount: number;
@@ -183,6 +187,7 @@ export default function Sidebar({
   topDownGraphInfo,
   currentGraphData,
   networkGraphRef,
+  exportNodes,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Actor[]>([]);
@@ -194,6 +199,8 @@ export default function Sidebar({
   const [localLimit, setLocalLimit] = useState(limit);
   const [localKeywords, setLocalKeywords] = useState('');
   const [exportExpanded, setExportExpanded] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [regexError, setRegexError] = useState<string | null>(null);
 
   const limitDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -259,25 +266,37 @@ export default function Sidebar({
 const handleKeywordSubmit = (e?: React.FormEvent) => {
   if (e) e.preventDefault();
 
-if (!localKeywords.trim()) {
-  setLocalKeywords('');   // ← ensure input visually clears
-  onResetToTopDown?.();
-  return;
-}
+  if (!localKeywords.trim()) {
+    setLocalKeywords('');
+    onResetToTopDown?.();
+    return;
+  }
+
+  if (useRegex) {
+    try {
+      new RegExp(localKeywords);
+      setRegexError(null);
+    } catch {
+      setRegexError('Invalid regex pattern');
+      return;
+    }
+  }
 
   if (onBottomUpSearch) {
     onBottomUpSearch({
       keywords: localKeywords,
-      expansionDegree: expansionDegree,
+      expansionDegree,
       maxNodes: maxHops || 2000,
       nodeTypes: Array.from(enabledNodeTypes),
       edgeTypes: Array.from(enabledCategories),
       searchFields: Array.from(searchFields),
-      searchLogic: searchLogic,
-      nodeRankingMode: 'global'
+      searchLogic,
+      nodeRankingMode: 'global',
+      useRegex,   // ← ADD
     });
   }
 };
+
 
   // ==============================
   // NEW: Get current title data for display
@@ -637,18 +656,33 @@ if (!localKeywords.trim()) {
               </div>
 
               <form onSubmit={handleKeywordSubmit} className="mb-0">
-                <label className="block text-sm text-gray-400 mb-2">
-                  Keyword search:
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-gray-400">Keyword search:</label>
+                  <button
+                    type="button"
+                    onClick={() => { setUseRegex(!useRegex); setRegexError(null); }}
+                    title={useRegex ? 'Regex mode on — click to disable' : 'Enable regex mode'}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono transition-colors ${
+                      useRegex
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                    }`}
+                  >
+                    regex
+                  </button>
+                </div>
 
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={localKeywords}
-                    onChange={(e) => setLocalKeywords(e.target.value)}
+                    onChange={(e) => { setLocalKeywords(e.target.value); setRegexError(null); }}
                     onKeyPress={(e) => e.key === 'Enter' && handleKeywordSubmit()}
-                    placeholder="tax, income, penalty"
-                    className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-gray-100 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                    placeholder={useRegex ? 'e.g. tax|income|\\bsec\\.' : 'tax, income, penalty'}
+                    className={`flex-1 px-3 py-2 bg-gray-700 border rounded-lg text-sm text-gray-100 
+                      placeholder-gray-400 focus:outline-none focus:border-blue-500 ${
+                      regexError ? 'border-red-500' : 'border-gray-600'
+                    }`}
                   />
                   <button
                     type="submit"
@@ -657,9 +691,14 @@ if (!localKeywords.trim()) {
                     Search
                   </button>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Comma-separated keywords
-                </p>
+
+                {regexError ? (
+                  <p className="text-xs text-red-400 mt-1">{regexError}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {useRegex ? 'Single regex pattern (e.g. tax|income)' : 'Comma-separated keywords'}
+                  </p>
+                )}
               </form>
             </>
           )}
@@ -820,6 +859,7 @@ if (!localKeywords.trim()) {
           {exportExpanded && (
             <ExportControls
               graphData={currentGraphData}
+              exportNodes={exportNodes}
               buildMode={buildMode}
               timeScope={timeScope}
               selectedTitle={selectedTitle}
