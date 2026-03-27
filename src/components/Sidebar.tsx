@@ -398,7 +398,7 @@ const handleKeywordSubmit = (e?: React.FormEvent) => {
       <div className="py-3 border-b border-gray-700 flex-shrink-0">
         <div className="px-4 relative">
           <label className="block text-sm text-gray-400 mb-2">
-            Search nodes:
+            Select node:
           </label>
           <input
             type="text"
