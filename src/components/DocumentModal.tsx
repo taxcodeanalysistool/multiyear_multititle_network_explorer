@@ -1,15 +1,18 @@
 // src/components/DocumentModal.tsx
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchDocument, fetchDocumentText, fetchNodeDetails } from '../api';
 import type { Document, TimeScope } from '../types';
+import DiffViewer from './DiffViewer';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface DocumentModalProps {
   docId: string;
   highlightTerm: string | null;
   secondaryHighlightTerm?: string | null;
   searchKeywords?: string;
-  useRegex?: boolean;           // ← ADD
+  useRegex?: boolean;
   timeScope: TimeScope;
   onTimeScopeChange: (scope: TimeScope) => void;
   onClose: () => void;
@@ -29,6 +32,10 @@ interface MatchPosition {
   percentage: number;
 }
 
+type ViewMode = 'original' | 'track-changes' | 'new';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 const COMMON_WORDS = new Set([
   'the', 'and', 'or', 'to', 'from', 'in', 'on', 'at', 'by', 'for', 'with',
   'about', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
@@ -37,12 +44,14 @@ const COMMON_WORDS = new Set([
   'beyond', 'plus', 'except', 'but', 'per', 'via', 'upon', 'against',
 ]);
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function DocumentModal({
   docId,
   highlightTerm,
   secondaryHighlightTerm,
   searchKeywords,
-  useRegex = false,             // ← ADD
+  useRegex = false,
   timeScope,
   onTimeScopeChange,
   onClose,
@@ -63,14 +72,50 @@ export default function DocumentModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const matchRefs = useRef<Map<number, HTMLElement>>(new Map());
 
+  // Track changes state
+  const [viewMode, setViewMode] = useState<ViewMode>('new');
+  const [priorText, setPriorText] = useState<string>('');
+
+  // Derive prior scope — one step back in the sorted availableTimeScopes list
+  const priorScope = useMemo(() => {
+    const idx = availableTimeScopes.indexOf(String(timeScope));
+    return idx > 0 ? availableTimeScopes[idx - 1] : null;
+  }, [availableTimeScopes, timeScope]);
+
+  // hasDiff: prior scope exists, both texts loaded, and they actually differ
+  const hasDiff =
+    !!priorScope &&
+    priorText.trim().length > 0 &&
+    documentText.trim().length > 0 &&
+    priorText !== documentText;
+
+  // Which text to display in non-diff views
+  const displayText = viewMode === 'original' ? priorText || documentText : documentText;
+
+  // Reset view mode and prior text whenever the doc or scope changes
+  useEffect(() => {
+    setViewMode('new');
+    setPriorText('');
+  }, [docId, timeScope]);
+
+  // Eagerly fetch prior scope text alongside the current doc load
+  useEffect(() => {
+    if (!priorScope) return;
+    let active = true;
+
+    fetchDocumentText(docId, selectedTitle, priorScope as TimeScope)
+      .then((data) => { if (active) setPriorText(data?.text || ''); })
+      .catch(() => { if (active) setPriorText(''); });
+
+    return () => { active = false; };
+  }, [docId, selectedTitle, priorScope]);
+
+  // Load current document metadata + text
   useEffect(() => {
     let active = true;
 
     const loadDocument = async () => {
-      if (isGraphLoading) {
-        setLoading(true);
-        return;
-      }
+      if (isGraphLoading) { setLoading(true); return; }
 
       setLoading(true);
       setError(null);
@@ -123,36 +168,29 @@ export default function DocumentModal({
     return () => { active = false; };
   }, [docId, selectedTitle, timeScope, isGraphLoading]);
 
-  useEffect(() => {
-    matchRefs.current.clear();
-  }, [docId, timeScope]);
+  useEffect(() => { matchRefs.current.clear(); }, [docId, timeScope]);
 
-  // ← CHANGED: searchPatterns section branches on useRegex
+  // Match positions for scroll gutter — skipped in track-changes view
   useEffect(() => {
-    if (!documentText) return;
+    if (!displayText || viewMode === 'track-changes') {
+      setMatchPositions([]);
+      return;
+    }
 
     const positions: MatchPosition[] = [];
-    const textLength = documentText.length;
-
+    const textLength = displayText.length;
     const searchPatterns: string[] = [];
     const primaryPatterns: string[] = [];
     const secondaryPatterns: string[] = [];
 
     if (searchKeywords) {
       if (useRegex) {
-        // Use the whole string as a single regex pattern — don't split or escape
-        try {
-          new RegExp(searchKeywords.trim(), 'gi'); // validate first
-          searchPatterns.push(searchKeywords.trim());
-        } catch {
-          // invalid regex, skip
-        }
+        try { new RegExp(searchKeywords.trim(), 'gi'); searchPatterns.push(searchKeywords.trim()); } catch {}
       } else {
         searchKeywords.split(',').forEach((keyword) => {
           const trimmed = keyword.trim();
-          if (trimmed.length > 0) {
+          if (trimmed.length > 0)
             searchPatterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-          }
         });
       }
     }
@@ -160,57 +198,42 @@ export default function DocumentModal({
     if (highlightTerm) {
       primaryPatterns.push(highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       highlightTerm.split(/\s+/).forEach((word) => {
-        if (word.length >= 3 && !COMMON_WORDS.has(word.toLowerCase())) {
+        if (word.length >= 3 && !COMMON_WORDS.has(word.toLowerCase()))
           primaryPatterns.push(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        }
       });
     }
 
     if (secondaryHighlightTerm) {
       secondaryPatterns.push(secondaryHighlightTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       secondaryHighlightTerm.split(/\s+/).forEach((word) => {
-        if (word.length >= 3 && !COMMON_WORDS.has(word.toLowerCase())) {
+        if (word.length >= 3 && !COMMON_WORDS.has(word.toLowerCase()))
           secondaryPatterns.push(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        }
       });
     }
 
-    if (searchPatterns.length > 0) {
-      const regex = new RegExp(`(${searchPatterns.join('|')})`, 'gi');
-      let match;
-      while ((match = regex.exec(documentText)) !== null) {
-        positions.push({ index: match.index, term: match[0], type: 'search', percentage: (match.index / textLength) * 100 });
-      }
-    }
+    const pushMatches = (patterns: string[], type: MatchPosition['type']) => {
+      if (!patterns.length) return;
+      try {
+        const re = new RegExp(`(${patterns.join('|')})`, 'gi');
+        let match;
+        while ((match = re.exec(displayText)) !== null)
+          positions.push({ index: match.index, term: match[0], type, percentage: (match.index / textLength) * 100 });
+      } catch {}
+    };
 
-    if (primaryPatterns.length > 0) {
-      const regex = new RegExp(`(${primaryPatterns.join('|')})`, 'gi');
-      let match;
-      while ((match = regex.exec(documentText)) !== null) {
-        positions.push({ index: match.index, term: match[0], type: 'primary', percentage: (match.index / textLength) * 100 });
-      }
-    }
-
-    if (secondaryPatterns.length > 0) {
-      const regex = new RegExp(`(${secondaryPatterns.join('|')})`, 'gi');
-      let match;
-      while ((match = regex.exec(documentText)) !== null) {
-        positions.push({ index: match.index, term: match[0], type: 'secondary', percentage: (match.index / textLength) * 100 });
-      }
-    }
-
+    pushMatches(searchPatterns, 'search');
+    pushMatches(primaryPatterns, 'primary');
+    pushMatches(secondaryPatterns, 'secondary');
     positions.sort((a, b) => a.index - b.index);
     setMatchPositions(positions);
-  }, [documentText, highlightTerm, secondaryHighlightTerm, searchKeywords, useRegex]);
+  }, [displayText, highlightTerm, secondaryHighlightTerm, searchKeywords, useRegex, viewMode]);
 
   const scrollToMatch = (index: number) => {
-    const element = matchRefs.current.get(index);
-    if (element && contentRef.current) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    matchRefs.current.get(index)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  // ← CHANGED: accepts isRegex param; uses RegExp.test() to identify search matches in regex mode
+  // ─── Highlight renderer ────────────────────────────────────────────────────
+
   const highlightText = (
     text: string,
     term: string | null,
@@ -218,29 +241,21 @@ export default function DocumentModal({
     searchTerms: string | null,
     isRegex: boolean = false,
   ): JSX.Element[] => {
-    if (!term && !secondaryTerm && !searchTerms) {
-      return [<span key="0">{text}</span>];
-    }
+    if (!term && !secondaryTerm && !searchTerms) return [<span key="0">{text}</span>];
 
     try {
       const patterns: string[] = [];
       const searchWords = new Set<string>();
       const primaryWords = new Set<string>();
       const secondaryWords = new Set<string>();
-
-      // Pre-compile a regex for identifying search matches in regex mode
-      // (plain mode uses searchWords set instead)
       let searchRegexForMatching: RegExp | null = null;
 
       if (searchTerms) {
         if (isRegex) {
           try {
-            // Wrap in non-capturing group so alternation doesn't bleed into surrounding patterns
             searchRegexForMatching = new RegExp(`^(?:${searchTerms.trim()})$`, 'i');
             patterns.push(searchTerms.trim());
-          } catch {
-            // invalid regex — skip highlighting rather than crash
-          }
+          } catch {}
         } else {
           searchTerms.split(',').forEach((keyword) => {
             const trimmed = keyword.trim();
@@ -281,13 +296,10 @@ export default function DocumentModal({
         const partStart = currentIndex;
         currentIndex += part.length;
 
-        // Determine if this part is a search match
         let isSearchMatch = false;
         if (searchRegexForMatching) {
-          // Regex mode: test the captured part directly against the pattern
           isSearchMatch = searchRegexForMatching.test(part);
         } else {
-          // Plain mode: check against the word set
           for (const searchWord of searchWords) {
             if (partLower.includes(searchWord) || searchWord.includes(partLower)) {
               isSearchMatch = true;
@@ -296,39 +308,20 @@ export default function DocumentModal({
           }
         }
 
-        if (isSearchMatch) {
-          return (
-            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
-              className="bg-green-300 text-black font-semibold px-1 rounded">
-              {part}
-            </mark>
-          );
-        }
-
-        if (term && (partLower === term.toLowerCase() || primaryWords.has(partLower))) {
-          return (
-            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
-              className="bg-yellow-400 text-black px-1 rounded">
-              {part}
-            </mark>
-          );
-        }
-
-        if (secondaryTerm && (partLower === secondaryTerm.toLowerCase() || secondaryWords.has(partLower))) {
-          return (
-            <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }}
-              className="bg-orange-300 text-black px-1 rounded">
-              {part}
-            </mark>
-          );
-        }
-
+        if (isSearchMatch)
+          return <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }} className="bg-green-300 text-black font-semibold px-1 rounded">{part}</mark>;
+        if (term && (partLower === term.toLowerCase() || primaryWords.has(partLower)))
+          return <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }} className="bg-yellow-400 text-black px-1 rounded">{part}</mark>;
+        if (secondaryTerm && (partLower === secondaryTerm.toLowerCase() || secondaryWords.has(partLower)))
+          return <mark key={index} ref={(el) => { if (el) matchRefs.current.set(partStart, el); }} className="bg-orange-300 text-black px-1 rounded">{part}</mark>;
         return <span key={index}>{part}</span>;
       });
     } catch {
       return [<span key="0">{text}</span>];
     }
   };
+
+  // ─── JSX ──────────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -342,14 +335,16 @@ export default function DocumentModal({
         {/* Header */}
         <div className="p-6 border-b border-gray-700 flex justify-between items-start">
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <h2 className="text-2xl font-semibold text-blue-400">
                 {document?.display_label || document?.name || document?.doc_id || docId}
               </h2>
               <span className="inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold bg-purple-600 text-white">
                 {timeScope}
               </span>
-              <div className="ml-auto flex gap-2">
+              <div className="ml-auto flex items-center gap-2 flex-wrap">
+
+                {/* Time scope selector */}
                 <select
                   value={timeScope}
                   onChange={(e) => { e.stopPropagation(); onTimeScopeChange(e.target.value); }}
@@ -359,6 +354,42 @@ export default function DocumentModal({
                     <option key={scope} value={scope}>{scope}</option>
                   ))}
                 </select>
+
+                {/* Track Changes toggle — only when both versions exist and differ */}
+                {hasDiff && !loading && !nodeNotFound && (
+                  <div className="flex rounded-lg overflow-hidden border border-gray-600 text-xs">
+                    <button
+                      onClick={() => setViewMode('new')}
+                      className={`px-3 py-1.5 font-medium transition-colors ${
+                        viewMode === 'new'
+                          ? 'bg-yellow-600 text-white'
+                          : 'bg-gray-700 text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      New
+                    </button>
+                    <button
+                      onClick={() => setViewMode('track-changes')}
+                      className={`px-3 py-1.5 font-medium transition-colors border-l border-r border-gray-600 ${
+                        viewMode === 'track-changes'
+                          ? 'bg-yellow-600 text-white'
+                          : 'bg-gray-700 text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      Track Changes
+                    </button>
+                    <button
+                      onClick={() => setViewMode('original')}
+                      className={`px-3 py-1.5 font-medium transition-colors ${
+                        viewMode === 'original'
+                          ? 'bg-yellow-600 text-white'
+                          : 'bg-gray-700 text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      Original
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -399,7 +430,9 @@ export default function DocumentModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 pr-12 relative" ref={contentRef}>
-          {!loading && !error && matchPositions.length > 0 && (
+
+          {/* Scroll gutter — hidden in track-changes view */}
+          {viewMode !== 'track-changes' && !loading && !error && matchPositions.length > 0 && (
             <div className="absolute right-4 top-0 bottom-0 w-3 bg-gray-700/50 rounded-full pointer-events-none z-10">
               {matchPositions.map((match, idx) => (
                 <button
@@ -446,39 +479,53 @@ export default function DocumentModal({
 
           {!loading && !error && !nodeNotFound && documentText && documentText.trim() !== '' && (
             <div className="prose prose-invert max-w-none">
-              <div className="whitespace-pre-wrap text-gray-300 leading-relaxed font-mono text-sm">
-                {/* ← CHANGED: pass useRegex as 5th argument */}
-                {highlightText(documentText, highlightTerm, secondaryHighlightTerm || null, searchKeywords || null, useRegex)}
-              </div>
+              {viewMode === 'track-changes' && hasDiff ? (
+                <DiffViewer beforeText={priorText} afterText={documentText} />
+              ) : (
+                <div className="whitespace-pre-wrap text-gray-300 leading-relaxed font-mono text-sm">
+                  {highlightText(displayText, highlightTerm, secondaryHighlightTerm || null, searchKeywords || null, useRegex)}
+                </div>
+              )}
             </div>
           )}
         </div>
 
         {/* Footer */}
         <div className="p-4 border-t border-gray-700 flex justify-between items-center">
-          <div className="text-sm text-gray-500 flex gap-4">
-            {searchKeywords && (
+          <div className="text-sm text-gray-500 flex gap-4 items-center flex-wrap">
+            {viewMode === 'track-changes' && hasDiff && (
               <span>
-                <span className="inline-block bg-green-300 text-black font-semibold px-2 py-0.5 rounded text-xs mr-1">
-                  {useRegex ? `/${searchKeywords}/` : 'Search keywords'}
-                </span>
+                <span style={{ color: '#86efac' }} className="mr-2">■ Added</span>
+                <span style={{ color: '#fca5a5' }}>■ Removed</span>
               </span>
             )}
-            {highlightTerm && (
-              <span>
-                <span className="inline-block bg-yellow-400 text-black px-2 py-0.5 rounded text-xs mr-1">
-                  {highlightTerm}
-                </span>
-              </span>
-            )}
-            {secondaryHighlightTerm && (
-              <span>
-                <span className="inline-block bg-orange-300 text-black px-2 py-0.5 rounded text-xs mr-1">
-                  {secondaryHighlightTerm}
-                </span>
-              </span>
+            {viewMode !== 'track-changes' && (
+              <>
+                {searchKeywords && (
+                  <span>
+                    <span className="inline-block bg-green-300 text-black font-semibold px-2 py-0.5 rounded text-xs mr-1">
+                      {useRegex ? `/${searchKeywords}/` : 'Search keywords'}
+                    </span>
+                  </span>
+                )}
+                {highlightTerm && (
+                  <span>
+                    <span className="inline-block bg-yellow-400 text-black px-2 py-0.5 rounded text-xs mr-1">
+                      {highlightTerm}
+                    </span>
+                  </span>
+                )}
+                {secondaryHighlightTerm && (
+                  <span>
+                    <span className="inline-block bg-orange-300 text-black px-2 py-0.5 rounded text-xs mr-1">
+                      {secondaryHighlightTerm}
+                    </span>
+                  </span>
+                )}
+              </>
             )}
           </div>
+
           <div className="flex items-center gap-2">
             {(onPrev || onNext) && (
               <div className="flex items-center gap-2 mr-4">
