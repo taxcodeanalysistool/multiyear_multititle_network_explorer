@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchDocument, fetchDocumentText, fetchNodeDetails } from '../api';
 import type { Document, TimeScope } from '../types';
 import DiffViewer from './DiffViewer';
+import { parseSearchQuery } from '../utils/parseSearchQuery';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -183,17 +184,18 @@ export default function DocumentModal({
     const primaryPatterns: string[] = [];
     const secondaryPatterns: string[] = [];
 
-    if (searchKeywords) {
-      if (useRegex) {
-        try { new RegExp(searchKeywords.trim(), 'gi'); searchPatterns.push(searchKeywords.trim()); } catch {}
-      } else {
-        searchKeywords.split(',').forEach((keyword) => {
-          const trimmed = keyword.trim();
-          if (trimmed.length > 0)
-            searchPatterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        });
-      }
-    }
+if (searchKeywords) {
+  if (useRegex) {
+    try { new RegExp(searchKeywords.trim(), 'gi'); searchPatterns.push(searchKeywords.trim()); } catch {}
+  } else {
+    const { phrases, keywords } = parseSearchQuery(searchKeywords);
+    // Phrases are added as-is (exact match), keywords individually
+    [...phrases, ...keywords].forEach((term) => {
+      if (term.length > 0)
+        searchPatterns.push(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    });
+  }
+}
 
     if (highlightTerm) {
       primaryPatterns.push(highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
@@ -250,22 +252,23 @@ export default function DocumentModal({
       const secondaryWords = new Set<string>();
       let searchRegexForMatching: RegExp | null = null;
 
-      if (searchTerms) {
-        if (isRegex) {
-          try {
-            searchRegexForMatching = new RegExp(`^(?:${searchTerms.trim()})$`, 'i');
-            patterns.push(searchTerms.trim());
-          } catch {}
-        } else {
-          searchTerms.split(',').forEach((keyword) => {
-            const trimmed = keyword.trim();
-            if (trimmed.length > 0) {
-              searchWords.add(trimmed.toLowerCase());
-              patterns.push(trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-            }
-          });
-        }
+// UPDATED
+if (searchTerms) {
+  if (isRegex) {
+    try {
+      searchRegexForMatching = new RegExp(`^(?:${searchTerms.trim()})$`, 'i');
+      patterns.push(searchTerms.trim());
+    } catch {}
+  } else {
+    const { phrases, keywords } = parseSearchQuery(searchTerms);
+    [...phrases, ...keywords].forEach((term) => {
+      if (term.length > 0) {
+        searchWords.add(term.toLowerCase());
+        patterns.push(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       }
+    });
+  }
+}
 
       if (term) {
         patterns.push(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

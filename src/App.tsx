@@ -9,6 +9,7 @@ import { WelcomeModal } from './components/WelcomeModal';
 import { NetworkBuilder } from './services/networkBuilder';
 import DocumentModal from './components/DocumentModal';
 import TableView from './components/TableView';
+import { parseSearchQuery } from './utils/parseSearchQuery';
 
 import { 
   fetchRelationships, 
@@ -46,6 +47,9 @@ function App() {
 
   const networkGraphRef = useRef<{ getSvgElement: () => SVGSVGElement | null }>(null);
   
+  // ── Ref-based guard to prevent top-down effect from racing the graph loader ──
+  const graphLoadingRef = useRef(false);
+
   const [openDocId, setOpenDocId] = useState<string | null>(null);
   const [fullGraph, setFullGraph] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({
     nodes: [],
@@ -134,143 +138,135 @@ function App() {
   const isSelectedInScope = !!selectedNode && selectedNode.scope === timeScope;
 
   const rightSidebarRelationships = useMemo(() => {
-  if (!isSelectedInScope) return [];
-  
-  // Filters are already applied in the API
-  return actorRelationships;
-}, [isSelectedInScope, actorRelationships]);
+    if (!isSelectedInScope) return [];
+    return actorRelationships;
+  }, [isSelectedInScope, actorRelationships]);
 
-const navRelationships = useMemo(() => {
-  if (!selectedNodeId) return actorRelationships;
-  return actorRelationships.filter((rel) => {
-    const actorId = String(rel.actor_id ?? rel.actor ?? '');
-    const targetId = String(rel.target_id ?? rel.target ?? '');
-    const strippedSelectedId = selectedNodeId.replace('index:', '');
-    const strippedActorId = actorId.replace('index:', '');
-    const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
-    return !otherId.startsWith('term:');
-  });
-}, [actorRelationships, selectedNodeId]);
+  const navRelationships = useMemo(() => {
+    if (!selectedNodeId) return actorRelationships;
+    return actorRelationships.filter((rel) => {
+      const actorId = String(rel.actor_id ?? rel.actor ?? '');
+      const targetId = String(rel.target_id ?? rel.target ?? '');
+      const strippedSelectedId = selectedNodeId.replace('index:', '');
+      const strippedActorId = actorId.replace('index:', '');
+      const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
+      return !otherId.startsWith('term:');
+    });
+  }, [actorRelationships, selectedNodeId]);
 
-
-
-// Filter displayGraph based on enabled filters (for bottom-up mode)
-// Filter displayGraph based on enabled filters (for bottom-up mode)
-const filteredDisplayGraph = useMemo(() => {
-  if (buildMode !== 'bottomUp') return displayGraph;
-  
-  let filteredLinks = displayGraph.links;
-  
-  // Apply category filters (edge types)
-  if (enabledCategories.size > 0 && enabledCategories.size < 3) {
-    filteredLinks = filteredLinks.filter(link => 
-      link.edge_type && enabledCategories.has(link.edge_type)
-    );
-  }
-  
-  // Apply node type filters - ALWAYS filter if any types are enabled
-  if (enabledNodeTypes.size > 0) {  // ← REMOVED "&& enabledNodeTypes.size < 3"
-    filteredLinks = filteredLinks.filter(link => {
+  // Filter displayGraph based on enabled filters (for bottom-up mode)
+  const filteredDisplayGraph = useMemo(() => {
+    if (buildMode !== 'bottomUp') return displayGraph;
+    
+    let filteredLinks = displayGraph.links;
+    
+    // Apply category filters (edge types)
+    if (enabledCategories.size > 0 && enabledCategories.size < 3) {
+      filteredLinks = filteredLinks.filter(link => 
+        link.edge_type && enabledCategories.has(link.edge_type)
+      );
+    }
+    
+    // Apply node type filters
+    if (enabledNodeTypes.size > 0) {
+      filteredLinks = filteredLinks.filter(link => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        
+        const sourceNode = displayGraph.nodes.find(n => n.id === sourceId);
+        const targetNode = displayGraph.nodes.find(n => n.id === targetId);
+        
+        const actorEnabled = sourceNode?.node_type && enabledNodeTypes.has(sourceNode.node_type);
+        const targetEnabled = targetNode?.node_type && enabledNodeTypes.has(targetNode.node_type);
+        
+        return actorEnabled && targetEnabled;
+      });
+    }
+    
+    // Get nodes that have at least one link
+    const connectedNodeIds = new Set<string>();
+    filteredLinks.forEach(link => {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      connectedNodeIds.add(sourceId);
+      connectedNodeIds.add(targetId);
+    });
+    
+    // CREATE FRESH LINK OBJECTS with string IDs to avoid D3 mutation issues
+    const freshLinks = filteredLinks.map(link => {
       const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
       const targetId = typeof link.target === 'string' ? link.target : link.target.id;
       
-      const sourceNode = displayGraph.nodes.find(n => n.id === sourceId);
-      const targetNode = displayGraph.nodes.find(n => n.id === targetId);
-      
-      const actorEnabled = sourceNode?.node_type && enabledNodeTypes.has(sourceNode.node_type);
-      const targetEnabled = targetNode?.node_type && enabledNodeTypes.has(targetNode.node_type);
-      
-      // Both must match enabled types
-      return actorEnabled && targetEnabled;
-    });
-  }
-  
-  // Get nodes that have at least one link
-  const connectedNodeIds = new Set<string>();
-  filteredLinks.forEach(link => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    connectedNodeIds.add(sourceId);
-    connectedNodeIds.add(targetId);
-  });
-  
-  // CREATE FRESH LINK OBJECTS with string IDs to avoid D3 mutation issues
-  const freshLinks = filteredLinks.map(link => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    
-    return {
-      source: sourceId,
-      target: targetId,
-      action: link.action,
-      edge_type: link.edge_type,
-      time: link.time,
-      usc_title: link.usc_title,
-      source_title: link.source_title,
-      weight: link.weight,
-      definition: link.definition,
-      location: link.location,
-      timestamp: link.timestamp,
-    };
-  });
-  
-  // RECALCULATE node degrees based on filtered links
-  const nodeDegrees = new Map<string, number>();
-  freshLinks.forEach(link => {
-    nodeDegrees.set(link.source, (nodeDegrees.get(link.source) || 0) + 1);
-    nodeDegrees.set(link.target, (nodeDegrees.get(link.target) || 0) + 1);
-  });
-  
-  // Update nodes with recalculated degrees and colors
-  const filteredNodes = displayGraph.nodes
-    .filter(n => connectedNodeIds.has(n.id))
-    .map(node => {
-      const degree = nodeDegrees.get(node.id) || 1;
-      
       return {
-        ...node,
-        val: degree,  // ← Use filtered degree for sizing
-        totalVal: node.totalVal,  // Keep original
+        source: sourceId,
+        target: targetId,
+        action: link.action,
+        edge_type: link.edge_type,
+        time: link.time,
+        usc_title: link.usc_title,
+        source_title: link.source_title,
+        weight: link.weight,
+        definition: link.definition,
+        location: link.location,
+        timestamp: link.timestamp,
       };
     });
-  
-  return {
-    nodes: filteredNodes,
-    links: freshLinks,
-    truncated: displayGraph.truncated,
-    matchedCount: displayGraph.matchedCount,
-  };
-}, [displayGraph, enabledCategories, enabledNodeTypes, buildMode]);
+    
+    // RECALCULATE node degrees based on filtered links
+    const nodeDegrees = new Map<string, number>();
+    freshLinks.forEach(link => {
+      nodeDegrees.set(link.source, (nodeDegrees.get(link.source) || 0) + 1);
+      nodeDegrees.set(link.target, (nodeDegrees.get(link.target) || 0) + 1);
+    });
+    
+    // Update nodes with recalculated degrees and colors
+    const filteredNodes = displayGraph.nodes
+      .filter(n => connectedNodeIds.has(n.id))
+      .map(node => {
+        const degree = nodeDegrees.get(node.id) || 1;
+        
+        return {
+          ...node,
+          val: degree,
+          totalVal: node.totalVal,
+        };
+      });
+    
+    return {
+      nodes: filteredNodes,
+      links: freshLinks,
+      truncated: displayGraph.truncated,
+      matchedCount: displayGraph.matchedCount,
+    };
+  }, [displayGraph, enabledCategories, enabledNodeTypes, buildMode]);
 
   useEffect(() => {
-  setViewMode('graph');
-}, [selectedTitle, timeScope]);
+    setViewMode('graph');
+  }, [selectedTitle, timeScope]);
 
-// Update displayGraphInfo when filteredDisplayGraph changes
-useEffect(() => {
-  if (buildMode !== 'bottomUp') return;
-  if (!filteredDisplayGraph) return;
-  
-  setDisplayGraphInfo({
-    nodeCount: filteredDisplayGraph.nodes.length,
-    linkCount: filteredDisplayGraph.links.length,
-    truncated: filteredDisplayGraph.truncated,
-    matchedCount: filteredDisplayGraph.matchedCount,
-  });
-}, [buildMode, filteredDisplayGraph]);
+  // Update displayGraphInfo when filteredDisplayGraph changes
+  useEffect(() => {
+    if (buildMode !== 'bottomUp') return;
+    if (!filteredDisplayGraph) return;
+    
+    setDisplayGraphInfo({
+      nodeCount: filteredDisplayGraph.nodes.length,
+      linkCount: filteredDisplayGraph.links.length,
+      truncated: filteredDisplayGraph.truncated,
+      matchedCount: filteredDisplayGraph.matchedCount,
+    });
+  }, [buildMode, filteredDisplayGraph]);
 
+  const rightSidebarTotal = isSelectedInScope ? actorTotalBeforeFilter : 0;
 
-const rightSidebarTotal = isSelectedInScope ? actorTotalBeforeFilter : 0;
-
-const getOtherNodeId = (rel: any, selectedId: string): string | null => {
-  const strippedSelectedId = selectedId.replace('index:', '');
-  const actorId = String(rel.actor_id ?? rel.actor ?? '');
-  const targetId = String(rel.target_id ?? rel.target ?? '');
-  const strippedActorId = actorId.replace('index:', '');
-  const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
-  return otherId ? `index:${otherId.replace('index:', '')}` : null;
-};
-
+  const getOtherNodeId = (rel: any, selectedId: string): string | null => {
+    const strippedSelectedId = selectedId.replace('index:', '');
+    const actorId = String(rel.actor_id ?? rel.actor ?? '');
+    const targetId = String(rel.target_id ?? rel.target ?? '');
+    const strippedActorId = actorId.replace('index:', '');
+    const otherId = strippedActorId === strippedSelectedId ? targetId : actorId;
+    return otherId ? `index:${otherId.replace('index:', '')}` : null;
+  };
 
   const convertGraphToRelationships = useCallback(
     (nodes: GraphNode[], links: GraphLink[]): Relationship[] => {
@@ -349,6 +345,9 @@ const getOtherNodeId = (rel: any, selectedId: string): string | null => {
   useEffect(() => {
     if (!manifestLoaded) return;
 
+    // ── Synchronous ref flip — visible to later effects in this same cycle ──
+    graphLoadingRef.current = true;
+
     const loadGraphData = async () => {
       console.log('🔵 GRAPH LOADING START - timeScope:', timeScope);
       setLoading(true);
@@ -380,8 +379,6 @@ const getOtherNodeId = (rel: any, selectedId: string): string | null => {
 
         setActorRelationships([]);
         setActorTotalBeforeFilter(0);
-        // setBottomUpSearchKeywords('');
-        // setBottomUpSearchParams(null);
         setDisplayGraphInfo(null);
         setTopDownGraphInfo(null);
       } catch (err) {
@@ -392,6 +389,7 @@ const getOtherNodeId = (rel: any, selectedId: string): string | null => {
         setLoading(false);
         setIsSwitchingScope(false);
         setIsInitialized(true);
+        graphLoadingRef.current = false;  // ← release the guard
       }
     };
 
@@ -402,122 +400,132 @@ const getOtherNodeId = (rel: any, selectedId: string): string | null => {
     setBuilder(new NetworkBuilder(scopedFullGraph.nodes, scopedFullGraph.links));
   }, [scopedFullGraph.nodes, scopedFullGraph.links]);
 
-const executeBottomUpSearch = useCallback(
-  async (
-    params: {
-      keywords: string;
-      expansionDegree: number;
-      maxNodes: number;
-      nodeTypes: string[];
-      edgeTypes: string[];
-      searchFields: string[];
-      searchLogic: 'AND' | 'OR';
-      nodeRankingMode: 'global' | 'subgraph';
-      useRegex: boolean;
-    },
-    opts?: { preservePreviousGraph?: boolean }
-  ) => {
-    if (!builder || params.searchFields.length === 0) return;
+  const executeBottomUpSearch = useCallback(
+    async (
+      params: {
+        keywords: string;
+        expansionDegree: number;
+        maxNodes: number;
+        nodeTypes: string[];
+        edgeTypes: string[];
+        searchFields: string[];
+        searchLogic: 'AND' | 'OR';
+        nodeRankingMode: 'global' | 'subgraph';
+        useRegex: boolean;
+      },
+      opts?: { preservePreviousGraph?: boolean }
+    ) => {
+      if (!builder || params.searchFields.length === 0) return;
 
-    const runId = ++bottomUpRunIdRef.current;
+      const runId = ++bottomUpRunIdRef.current;
 
-    if (!opts?.preservePreviousGraph) setLoading(true);
+      if (!opts?.preservePreviousGraph) setLoading(true);
 
-    setRelationships([]);
-    setTopDownGraphInfo(null);
+      setRelationships([]);
+      setTopDownGraphInfo(null);
 
-    try {
-      const terms = params.useRegex
-        ? [params.keywords.trim()]
-        : params.keywords
-            .split(',')
-            .map((t) => t.trim())
-            .filter((t) => t);
+      try {
+        const terms = params.useRegex
+          ? [params.keywords.trim()]
+          : (() => {
+              const phrases: string[] = [];
+              const keywords: string[] = [];
+              const quoteRegex = /"([^"]+)"/g;
+              let match;
+              while ((match = quoteRegex.exec(params.keywords)) !== null) {
+                if (match[1].trim()) phrases.push(`"${match[1].trim()}"`);
+              }
+              const remainder = params.keywords.replace(/"[^"]*"/g, '').trim();
+              if (remainder) {
+                remainder.split(',').forEach(k => { if (k.trim()) keywords.push(k.trim()); });
+              }
+              return [...phrases, ...keywords];
+            })();
 
-      const builderState: NetworkBuilderState = {
-        searchTerms: terms,
-        searchFields: params.searchFields,
-        allowedNodeTypes: params.nodeTypes as ('index' | 'entity' | 'concept')[],
-        allowedEdgeTypes: params.edgeTypes as ('definition' | 'reference' | 'hierarchy')[],
-        allowedTitles: [],
-        allowedSections: [],
-        seedNodeIds: [],
-        expansionDepth: params.expansionDegree,
-        maxNodesPerExpansion: 100,
-        maxTotalNodes: params.maxNodes,
-      };
+        const builderState: NetworkBuilderState = {
+          searchTerms: terms,
+          searchFields: params.searchFields,
+          allowedNodeTypes: params.nodeTypes as ('index' | 'entity' | 'concept')[],
+          allowedEdgeTypes: params.edgeTypes as ('definition' | 'reference' | 'hierarchy')[],
+          allowedTitles: [],
+          allowedSections: [],
+          seedNodeIds: [],
+          expansionDepth: params.expansionDegree,
+          maxNodesPerExpansion: 100,
+          maxTotalNodes: params.maxNodes,
+        };
 
-      const filtered = builder.buildNetwork(
-        builderState,
-        params.searchLogic,
-        params.nodeRankingMode,
-        params.useRegex,
-      );
+        const filtered = builder.buildNetwork(
+          builderState,
+          params.searchLogic,
+          params.nodeRankingMode,
+          params.useRegex,
+        );
 
-      if (runId !== bottomUpRunIdRef.current) return;
+        if (runId !== bottomUpRunIdRef.current) return;
 
-      let finalLinks = filtered.links;
-      let linksTruncated = false;
+        let finalLinks = filtered.links;
+        let linksTruncated = false;
 
-      if (finalLinks.length > limit) {
-        const nodeDegrees = new Map<string, number>();
-        filtered.links.forEach((link) => {
+        if (finalLinks.length > limit) {
+          const nodeDegrees = new Map<string, number>();
+          filtered.links.forEach((link) => {
+            const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+            const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+            nodeDegrees.set(sourceId, (nodeDegrees.get(sourceId) || 0) + 1);
+            nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
+          });
+
+          finalLinks = [...filtered.links]
+            .sort((a, b) => {
+              const sourceA = typeof a.source === 'string' ? a.source : a.source.id;
+              const targetA = typeof a.target === 'string' ? a.target : a.target.id;
+              const sourceB = typeof b.source === 'string' ? b.source : b.source.id;
+              const targetB = typeof b.target === 'string' ? b.target : b.target.id;
+
+              const degreeA = (nodeDegrees.get(sourceA) || 0) + (nodeDegrees.get(targetA) || 0);
+              const degreeB = (nodeDegrees.get(sourceB) || 0) + (nodeDegrees.get(targetB) || 0);
+
+              return degreeB - degreeA;
+            })
+            .slice(0, limit);
+
+          linksTruncated = true;
+        }
+
+        const nodesInFinalLinks = new Set<string>();
+        finalLinks.forEach((link) => {
           const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
           const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-          nodeDegrees.set(sourceId, (nodeDegrees.get(sourceId) || 0) + 1);
-          nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
+          nodesInFinalLinks.add(sourceId);
+          nodesInFinalLinks.add(targetId);
         });
 
-        finalLinks = [...filtered.links]
-          .sort((a, b) => {
-            const sourceA = typeof a.source === 'string' ? a.source : a.source.id;
-            const targetA = typeof a.target === 'string' ? a.target : a.target.id;
-            const sourceB = typeof b.source === 'string' ? b.source : b.source.id;
-            const targetB = typeof b.target === 'string' ? b.target : b.target.id;
+        const finalNodes = filtered.nodes.filter((n) => nodesInFinalLinks.has(n.id));
 
-            const degreeA = (nodeDegrees.get(sourceA) || 0) + (nodeDegrees.get(targetA) || 0);
-            const degreeB = (nodeDegrees.get(sourceB) || 0) + (nodeDegrees.get(targetB) || 0);
+        setDisplayGraph({
+          nodes: finalNodes,
+          links: finalLinks,
+          truncated: filtered.truncated || linksTruncated,
+          matchedCount: filtered.matchedCount,
+        });
 
-            return degreeB - degreeA;
-          })
-          .slice(0, limit);
+        setDisplayGraphInfo({
+          nodeCount: finalNodes.length,
+          linkCount: finalLinks.length,
+          truncated: filtered.truncated || linksTruncated,
+          matchedCount: filtered.matchedCount,
+        });
 
-        linksTruncated = true;
+        setIsLoadingNodeRelationships(false);
+      } catch (error) {
+        console.error('Error building network:', error);
+      } finally {
+        if (!opts?.preservePreviousGraph) setLoading(false);
       }
-
-      const nodesInFinalLinks = new Set<string>();
-      finalLinks.forEach((link) => {
-        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-        nodesInFinalLinks.add(sourceId);
-        nodesInFinalLinks.add(targetId);
-      });
-
-      const finalNodes = filtered.nodes.filter((n) => nodesInFinalLinks.has(n.id));
-
-      setDisplayGraph({
-        nodes: finalNodes,
-        links: finalLinks,
-        truncated: filtered.truncated || linksTruncated,
-        matchedCount: filtered.matchedCount,
-      });
-
-      setDisplayGraphInfo({
-        nodeCount: finalNodes.length,
-        linkCount: finalLinks.length,
-        truncated: filtered.truncated || linksTruncated,
-        matchedCount: filtered.matchedCount,
-      });
-
-      setIsLoadingNodeRelationships(false);
-    } catch (error) {
-      console.error('Error building network:', error);
-    } finally {
-      if (!opts?.preservePreviousGraph) setLoading(false);
-    }
-  },
-  [builder, limit]
-);
+    },
+    [builder, limit]
+  );
 
   useEffect(() => {
     if (buildMode !== 'bottomUp') return;
@@ -561,19 +569,17 @@ const executeBottomUpSearch = useCallback(
     }
 
     if (!builder) return;
-if (!bottomUpSearchParams) return;
+    if (!bottomUpSearchParams) return;
 
-// Always search with all types, let filteredDisplayGraph handle filtering
-const searchParamsWithAllTypes = {
-  ...bottomUpSearchParams,
-  nodeTypes: ['index', 'entity', 'concept'],
-  edgeTypes: ['definition', 'reference', 'hierarchy'],
-};
+    const searchParamsWithAllTypes = {
+      ...bottomUpSearchParams,
+      nodeTypes: ['index', 'entity', 'concept'],
+      edgeTypes: ['definition', 'reference', 'hierarchy'],
+    };
 
-executeBottomUpSearch(searchParamsWithAllTypes, { preservePreviousGraph: true }).finally(() => {
-  setIsSwitchingScope(false);
-});
-
+    executeBottomUpSearch(searchParamsWithAllTypes, { preservePreviousGraph: true }).finally(() => {
+      setIsSwitchingScope(false);
+    });
 
   }, [
     buildMode,
@@ -607,46 +613,43 @@ executeBottomUpSearch(searchParamsWithAllTypes, { preservePreviousGraph: true })
           { category: 'hierarchy', count: hierarchyLinks },
         ],
       });
-
-      
     }
   }, [fullGraph]);
 
-
   const loadDataDeps = {
-  manifestLoaded,
-  isInitialized,
-  loading,
-  isSwitchingScope,
-  buildMode,
-  timeScope,
-  limit,
-  enabledClusterIds: enabledClusterIds.size,
-  enabledCategories: enabledCategories.size,
-  enabledNodeTypes: enabledNodeTypes.size,
-  yearRange: yearRange.join(','),
-  includeUndated,
-  keywords,
-  maxHops,
-  selectedTitle,
-};
+    manifestLoaded,
+    isInitialized,
+    loading,
+    isSwitchingScope,
+    buildMode,
+    timeScope,
+    limit,
+    enabledClusterIds: enabledClusterIds.size,
+    enabledCategories: enabledCategories.size,
+    enabledNodeTypes: enabledNodeTypes.size,
+    yearRange: yearRange.join(','),
+    includeUndated,
+    keywords,
+    maxHops,
+    selectedTitle,
+  };
 
-const prevDepsRef = useRef(loadDataDeps);
+  const prevDepsRef = useRef(loadDataDeps);
 
-useEffect(() => {
-  const prev = prevDepsRef.current;
-  const changed = Object.keys(loadDataDeps).filter(
-    key => prev[key as keyof typeof loadDataDeps] !== loadDataDeps[key as keyof typeof loadDataDeps]
-  );
-  
-  if (changed.length > 0) {
-    changed.forEach(key => {
-      console.log(`  ${key}: ${prev[key as keyof typeof prev]} → ${loadDataDeps[key as keyof typeof loadDataDeps]}`);
-    });
-  }
-  
-  prevDepsRef.current = loadDataDeps;
-}, [loadDataDeps]);
+  useEffect(() => {
+    const prev = prevDepsRef.current;
+    const changed = Object.keys(loadDataDeps).filter(
+      key => prev[key as keyof typeof loadDataDeps] !== loadDataDeps[key as keyof typeof loadDataDeps]
+    );
+    
+    if (changed.length > 0) {
+      changed.forEach(key => {
+        console.log(`  ${key}: ${prev[key as keyof typeof prev]} → ${loadDataDeps[key as keyof typeof loadDataDeps]}`);
+      });
+    }
+    
+    prevDepsRef.current = loadDataDeps;
+  }, [loadDataDeps]);
 
   // Top-down data loading
   useEffect(() => {
@@ -654,6 +657,7 @@ useEffect(() => {
     if (!isInitialized) return;
     if (loading) return;
     if (isSwitchingScope) return;
+    if (graphLoadingRef.current) return;  // ← catches same-cycle race with graph loader
     if (buildMode !== 'topDown') return;
     if (fullGraph.nodes.length === 0) return;
     
@@ -682,20 +686,17 @@ useEffect(() => {
         let workingRelationships = relationshipsResponse.relationships;
 
         if (enabledNodeTypes.size > 0 && enabledNodeTypes.size < 3) {
-  workingRelationships = workingRelationships.filter((rel) => {
-    const actorType = rel.actor_type;
-    const targetType = rel.target_type;
-    return (
-      actorType &&
-      enabledNodeTypes.has(actorType) &&
-      targetType &&
-      enabledNodeTypes.has(targetType)  // ← BOTH must match
-    );
-  });
-}
-
-
-
+          workingRelationships = workingRelationships.filter((rel) => {
+            const actorType = rel.actor_type;
+            const targetType = rel.target_type;
+            return (
+              actorType &&
+              enabledNodeTypes.has(actorType) &&
+              targetType &&
+              enabledNodeTypes.has(targetType)
+            );
+          });
+        }
 
         let filteredRelationships = workingRelationships;
 
@@ -802,44 +803,42 @@ useEffect(() => {
     if (loading || !selectedNode?.id || selectedNode.scope !== timeScope) return;
     if (buildMode !== 'topDown') return;
 
-const loadNodeRelationships = async () => {
-  setIsLoadingNodeRelationships(true);
-  try {
-    const { relationships, totalBeforeFilter } = await fetchActorRelationships(
-      selectedNode.id,
-      Array.from(enabledClusterIds),
-      Array.from(enabledCategories),
-      yearRange,
-      includeUndated,
-      keywords,
-      maxHops,
-      selectedTitle,
-      timeScope,
-      Array.from(enabledNodeTypes)  // ← ADD this line
-    );
+    const loadNodeRelationships = async () => {
+      setIsLoadingNodeRelationships(true);
+      try {
+        const { relationships, totalBeforeFilter } = await fetchActorRelationships(
+          selectedNode.id,
+          Array.from(enabledClusterIds),
+          Array.from(enabledCategories),
+          yearRange,
+          includeUndated,
+          keywords,
+          maxHops,
+          selectedTitle,
+          timeScope,
+          Array.from(enabledNodeTypes)
+        );
 
-    setActorRelationships(relationships);
-    setActorTotalBeforeFilter(totalBeforeFilter);
-// After setActorTotalBeforeFilter(response.totalBeforeFilter):
-try {
-  const details = await fetchNodeDetails(id, selectedTitle, timeScope);
-  const label = details?.display_label
-    ? details.display_label.replace('26 U.S.C. ', '').replace(',', '').trim()
-    : id;
-  setSelectedNodeDisplayLabel(label);
-} catch (err) {
-  setSelectedNodeDisplayLabel(id);
-}
+        setActorRelationships(relationships);
+        setActorTotalBeforeFilter(totalBeforeFilter);
 
+        try {
+          const details = await fetchNodeDetails(selectedNode.id, selectedTitle, timeScope);
+          const label = details?.display_label
+            ? details.display_label.replace('26 U.S.C. ', '').replace(',', '').trim()
+            : selectedNode.id;
+          setSelectedNodeDisplayLabel(label);
+        } catch (err) {
+          setSelectedNodeDisplayLabel(selectedNode.id);
+        }
 
-    setIsRightSidebarOpen(true);
-  } catch (err) {
-    console.error('Failed to load node relationships after timeScope change:', err);
-  } finally {
-    setIsLoadingNodeRelationships(false);
-  }
-};
-
+        setIsRightSidebarOpen(true);
+      } catch (err) {
+        console.error('Failed to load node relationships after timeScope change:', err);
+      } finally {
+        setIsLoadingNodeRelationships(false);
+      }
+    };
 
     loadNodeRelationships();
   }, [
@@ -870,15 +869,15 @@ try {
   );
 
   const switchTimeScope = useCallback(
-  (next: TimeScope) => {
-    if (next === timeScope) return;
-    
-    setIsSwitchingScope(true);
-    setIsLoadingNodeRelationships(true); // ← ADD THIS
-    setTimeScope(next);
-  },
-  [timeScope]
-);
+    (next: TimeScope) => {
+      if (next === timeScope) return;
+      
+      setIsSwitchingScope(true);
+      setIsLoadingNodeRelationships(true);
+      setTimeScope(next);
+    },
+    [timeScope]
+  );
 
   const toggleCluster = useCallback((clusterId: number) => {
     setEnabledClusterIds((prev) => {
@@ -961,35 +960,33 @@ try {
             setActorTotalBeforeFilter(0);
           }
         } finally {
-          setIsLoadingNodeRelationships(false);  // ← ADD
+          setIsLoadingNodeRelationships(false);
         }
       };
 
       loadNodeRelationships();
     } else {
-  // Bottom-up mode: derive relationships from filteredDisplayGraph
-  setIsLoadingNodeRelationships(false);
-  
-  // Get TOTAL (unfiltered) relationships for this node
-  const totalRelatedLinks = displayGraph.links.filter((link) => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    return sourceId === id || targetId === id;
-  });
-  
-  // Get FILTERED relationships for this node
-  const filteredRelatedLinks = filteredDisplayGraph.links.filter((link) => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    return sourceId === id || targetId === id;
-  });
+      // Bottom-up mode: derive relationships from filteredDisplayGraph
+      setIsLoadingNodeRelationships(false);
+      
+      // Get TOTAL (unfiltered) relationships for this node
+      const totalRelatedLinks = displayGraph.links.filter((link) => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        return sourceId === id || targetId === id;
+      });
+      
+      // Get FILTERED relationships for this node
+      const filteredRelatedLinks = filteredDisplayGraph.links.filter((link) => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        return sourceId === id || targetId === id;
+      });
 
-  const rels = convertGraphToRelationships(filteredDisplayGraph.nodes, filteredRelatedLinks);
-  setActorRelationships(rels);
-  setActorTotalBeforeFilter(totalRelatedLinks.length);  // ← Use unfiltered total
-}
-
-
+      const rels = convertGraphToRelationships(filteredDisplayGraph.nodes, filteredRelatedLinks);
+      setActorRelationships(rels);
+      setActorTotalBeforeFilter(totalRelatedLinks.length);
+    }
 
   }, [
     buildMode,
@@ -1010,49 +1007,48 @@ try {
   ]);
 
   const handleBottomUpSearch = useCallback(
-  (params: {
-    keywords: string;
-    expansionDegree: number;
-    maxNodes: number;
-    nodeTypes: string[];
-    edgeTypes: string[];
-    searchFields: string[];
-    searchLogic: 'AND' | 'OR';
-    nodeRankingMode: 'global' | 'subgraph';
-    useRegex: boolean;
-  }) => {
-    if (!builder) {
-      alert('Network builder is not ready. Please wait for the data to load.');
-      return;
-    }
+    (params: {
+      keywords: string;
+      expansionDegree: number;
+      maxNodes: number;
+      nodeTypes: string[];
+      edgeTypes: string[];
+      searchFields: string[];
+      searchLogic: 'AND' | 'OR';
+      nodeRankingMode: 'global' | 'subgraph';
+      useRegex: boolean;
+    }) => {
+      if (!builder) {
+        alert('Network builder is not ready. Please wait for the data to load.');
+        return;
+      }
 
-    if (!params.keywords.trim()) {
-      alert('Please enter some keywords to search for (e.g., "tax")');
-      return;
-    }
+      if (!params.keywords.trim()) {
+        alert('Please enter some keywords to search for (e.g., "tax")');
+        return;
+      }
 
-    if (params.searchFields.length === 0) {
-      alert('Please select at least one field to search in.');
-      return;
-    }
+      if (params.searchFields.length === 0) {
+        alert('Please select at least one field to search in.');
+        return;
+      }
 
-    const effective = {
-  ...params,
-  maxNodes: maxHops || 1500,
-  nodeTypes: ['index', 'entity', 'concept'],  // ← Always search all node types
-  edgeTypes: ['definition', 'reference', 'hierarchy'],  // ← Always search all edge types
-};
+      const effective = {
+        ...params,
+        maxNodes: maxHops || 1500,
+        nodeTypes: ['index', 'entity', 'concept'],
+        edgeTypes: ['definition', 'reference', 'hierarchy'],
+      };
 
-    setUseRegex(params.useRegex);
-    setBottomUpSearchParams(effective);
-    setBottomUpSearchKeywords(params.keywords);
-    setBuildMode('bottomUp');
+      setUseRegex(params.useRegex);
+      setBottomUpSearchParams(effective);
+      setBottomUpSearchKeywords(params.keywords);
+      setBuildMode('bottomUp');
 
-    executeBottomUpSearch(effective);
-  },
-  [builder, executeBottomUpSearch, maxHops]
-);
-
+      executeBottomUpSearch(effective);
+    },
+    [builder, executeBottomUpSearch, maxHops]
+  );
 
   const handleStartNewNetwork = useCallback(() => {
     setBuildMode('bottomUp');
@@ -1072,52 +1068,46 @@ try {
     setActorRelationships([]);
   }, []);
 
-const handleResetToTopDown = useCallback(() => {
-  setBuildMode('topDown');
-  setBottomUpSearchKeywords('');
-  setBottomUpSearchParams(null);
-  setDisplayGraphInfo(null);
-  setTopDownGraphInfo(null);
-  setSelectedNode(null);
-  setActorRelationships([]);
-  setRelationships([]);
-  setUseRegex(false);
-  setIsInitialized(false);   // ← forces the top-down useEffect to re-run
-  setTimeout(() => setIsInitialized(true), 0);  // ← re-enables it next tick
-}, []);
+  const handleResetToTopDown = useCallback(() => {
+    setBuildMode('topDown');
+    setBottomUpSearchKeywords('');
+    setBottomUpSearchParams(null);
+    setDisplayGraphInfo(null);
+    setTopDownGraphInfo(null);
+    setSelectedNode(null);
+    setActorRelationships([]);
+    setRelationships([]);
+    setUseRegex(false);
+    setIsInitialized(false);
+    setTimeout(() => setIsInitialized(true), 0);
+  }, []);
 
-const tableViewData = useMemo(() => {
-  let nodes = scopedFullGraph.nodes;
+  const tableViewData = useMemo(() => {
+    let nodes = scopedFullGraph.nodes;
 
-  // In bottom-up mode with an active search, narrow to matched nodes
-  if (buildMode === 'bottomUp' && bottomUpSearchKeywords.trim()) {
-    const searchNodeIds = new Set(displayGraph.nodes.map((n) => n.id));
-    nodes = scopedFullGraph.nodes.filter((n) => searchNodeIds.has(n.id));
-  }
+    if (buildMode === 'bottomUp' && bottomUpSearchKeywords.trim()) {
+      const searchNodeIds = new Set(displayGraph.nodes.map((n) => n.id));
+      nodes = scopedFullGraph.nodes.filter((n) => searchNodeIds.has(n.id));
+    }
 
-  // Apply node type filters (mirrors what the graph does)
-  if (enabledNodeTypes.size > 0) {
-    nodes = nodes.filter((n) => enabledNodeTypes.has(n.node_type));
-  }
+    if (enabledNodeTypes.size > 0) {
+      nodes = nodes.filter((n) => enabledNodeTypes.has(n.node_type));
+    }
 
-  // Keep links for degree calculation only — nodes aren't filtered by connectivity
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const links = scopedFullGraph.links.filter((l) => {
-    const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
-    const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
-    return nodeIds.has(s) && nodeIds.has(t);
-  });
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const links = scopedFullGraph.links.filter((l) => {
+      const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
+      const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
+      return nodeIds.has(s) && nodeIds.has(t);
+    });
 
-  return { nodes, links };
-}, [scopedFullGraph, buildMode, bottomUpSearchKeywords, displayGraph, enabledNodeTypes]);
+    return { nodes, links };
+  }, [scopedFullGraph, buildMode, bottomUpSearchKeywords, displayGraph, enabledNodeTypes]);
 
-
-  // Add this before the return statement
   const currentGraphData = useMemo(() => {
     if (buildMode === 'bottomUp') {
       return filteredDisplayGraph;
     } else if (buildMode === 'topDown' && relationships) {
-      // Convert relationships to graph format
       const nodeMap = new Map<string, GraphNode>();
       const links: GraphLink[] = [];
 
@@ -1166,8 +1156,6 @@ const tableViewData = useMemo(() => {
     return null;
   }, [buildMode, filteredDisplayGraph, relationships, timeScope, selectedTitle]);
 
-
-
   return (
     <>
       <div className="flex h-screen bg-gray-900 text-white">
@@ -1213,7 +1201,7 @@ const tableViewData = useMemo(() => {
             topDownGraphInfo={topDownGraphInfo}
             currentGraphData={currentGraphData}
             networkGraphRef={networkGraphRef}
-  	    exportNodes={tableViewData.nodes}
+            exportNodes={tableViewData.nodes}
           />
         </div>
 
@@ -1224,64 +1212,60 @@ const tableViewData = useMemo(() => {
             </div>
           )}
 
-        {/* Graph / Table toggle — bottom left, next to sidebar */}
-        <div className="absolute bottom-14 left-4 z-20 flex rounded-lg overflow-hidden border border-gray-600">
-          <button
-            className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-              viewMode === 'graph' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-            onClick={() => setViewMode('graph')}
-          >
-            Graph
-          </button>
-          <button
-            className={`px-4 py-1.5 text-sm font-medium transition-colors ${
-              viewMode === 'table' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-            onClick={() => setViewMode('table')}
-          >
-            Table
-          </button>
-        </div>
-
-        {/* Graph — always mounted, hidden when table is active */}
-        <div style={{ display: viewMode === 'table' ? 'none' : 'flex', height: '100%', width: '100%' }}>
-          {loading ? (
-            <div className="flex items-center justify-center h-full w-full bg-gray-900">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                <p className="text-gray-400">Loading network data...</p>
-              </div>
-            </div>
-          ) : (
-            <NetworkGraph
-              ref={networkGraphRef}
-              key={`${selectedTitle}::${buildMode}`}
-              graphData={buildMode === 'bottomUp' ? filteredDisplayGraph : undefined}
-              relationships={buildMode === 'topDown' ? relationships : undefined}
-              selectedNode={selectedNode}
-              onNodeClick={handleNodeClick}
-              minDensity={minDensity}
-              actorTotalCounts={actorTotalCounts}
-              enabledCategories={enabledCategories}
-              enabledNodeTypes={enabledNodeTypes}
-              timeScope={timeScope}
-            />
-          )}
-        </div>
-
-        {/* Table — only mounted when active */}
-        {viewMode === 'table' && (
-          <div style={{ position: 'absolute', inset: 0 }}>
-            <TableView
-              nodes={tableViewData.nodes}
-              links={tableViewData.links}
-              selectedNodeId={selectedNodeId}
-              onNodeClick={handleNodeClick}
-            />
+          <div className="absolute bottom-14 left-4 z-20 flex rounded-lg overflow-hidden border border-gray-600">
+            <button
+              className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                viewMode === 'graph' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+              }`}
+              onClick={() => setViewMode('graph')}
+            >
+              Graph
+            </button>
+            <button
+              className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                viewMode === 'table' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+              }`}
+              onClick={() => setViewMode('table')}
+            >
+              Table
+            </button>
           </div>
-        )}
 
+          <div style={{ display: viewMode === 'table' ? 'none' : 'flex', height: '100%', width: '100%' }}>
+            {loading ? (
+              <div className="flex items-center justify-center h-full w-full bg-gray-900">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                  <p className="text-gray-400">Loading network data...</p>
+                </div>
+              </div>
+            ) : (
+              <NetworkGraph
+                ref={networkGraphRef}
+                key={`${selectedTitle}::${buildMode}`}
+                graphData={buildMode === 'bottomUp' ? filteredDisplayGraph : undefined}
+                relationships={buildMode === 'topDown' ? relationships : undefined}
+                selectedNode={selectedNode}
+                onNodeClick={handleNodeClick}
+                minDensity={minDensity}
+                actorTotalCounts={actorTotalCounts}
+                enabledCategories={enabledCategories}
+                enabledNodeTypes={enabledNodeTypes}
+                timeScope={timeScope}
+              />
+            )}
+          </div>
+
+          {viewMode === 'table' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <TableView
+                nodes={tableViewData.nodes}
+                links={tableViewData.links}
+                selectedNodeId={selectedNodeId}
+                onNodeClick={handleNodeClick}
+              />
+            </div>
+          )}
         </div>
 
         <div className="hidden lg:block">
@@ -1296,24 +1280,23 @@ const tableViewData = useMemo(() => {
               timeScope={timeScope}
               onTimeScopeChange={switchTimeScope}
               onViewFullText={(docId) => {
-  const strDocId = String(docId);
-  const strippedDocId = strDocId.replace('index:', '');
-  const strippedSelectedId = selectedNodeId!.replace('index:', '');
-  if (strippedDocId === strippedSelectedId) {
-    setOpenDocId(strDocId);
-    setOpenDocIndex(-1);
-    return;
-  }
-  const idx = navRelationships.findIndex((rel) => {
-    const actor = String(rel.actor ?? '');
-    const target = String(rel.target ?? '');
-    const otherId = actor === strippedSelectedId ? target : actor;
-    return otherId === strippedDocId;
-  });
-  setOpenDocId(strDocId);
-  setOpenDocIndex(idx >= 0 ? idx : 0);
-}}
-
+                const strDocId = String(docId);
+                const strippedDocId = strDocId.replace('index:', '');
+                const strippedSelectedId = selectedNodeId!.replace('index:', '');
+                if (strippedDocId === strippedSelectedId) {
+                  setOpenDocId(strDocId);
+                  setOpenDocIndex(-1);
+                  return;
+                }
+                const idx = navRelationships.findIndex((rel) => {
+                  const actor = String(rel.actor ?? '');
+                  const target = String(rel.target ?? '');
+                  const otherId = actor === strippedSelectedId ? target : actor;
+                  return otherId === strippedDocId;
+                });
+                setOpenDocId(strDocId);
+                setOpenDocIndex(idx >= 0 ? idx : 0);
+              }}
               selectedTitle={selectedTitle}
               availableTimeScopes={availableTimeScopes}
               isLoadingRelationships={isLoadingNodeRelationships}
@@ -1346,53 +1329,52 @@ const tableViewData = useMemo(() => {
 
       <WelcomeModal isOpen={showWelcome} onClose={handleCloseWelcome} />
 
-{openDocId && (
-  <DocumentModal
-    docId={openDocId}
-    highlightTerm={openDocIndex === -1 ? null : selectedNodeDisplayLabel}
-    secondaryHighlightTerm={null}
-    searchKeywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
-    useRegex={useRegex}
-    timeScope={timeScope}
-    onTimeScopeChange={switchTimeScope}
-    onClose={() => { setOpenDocId(null); setOpenDocIndex(null); }}
-    selectedTitle={selectedTitle}
-    availableTimeScopes={availableTimeScopes}
-    isGraphLoading={loading || isSwitchingScope}
-    currentIndex={openDocIndex ?? undefined}
-    totalCount={openDocIndex !== null ? navRelationships.length : undefined}
-    onPrev={
-      openDocIndex !== null && openDocIndex > 0
-        ? () => {
-            const prevIdx = openDocIndex - 1;
-            const rel = navRelationships[prevIdx];
-            const id = getOtherNodeId(rel, selectedNodeId!);
-            if (!id) return;
-            setOpenDocId(id);
-            setOpenDocIndex(prevIdx);
+      {openDocId && (
+        <DocumentModal
+          docId={openDocId}
+          highlightTerm={openDocIndex === -1 ? null : selectedNodeDisplayLabel}
+          secondaryHighlightTerm={null}
+          searchKeywords={buildMode === 'bottomUp' ? bottomUpSearchKeywords : keywords}
+          useRegex={useRegex}
+          timeScope={timeScope}
+          onTimeScopeChange={switchTimeScope}
+          onClose={() => { setOpenDocId(null); setOpenDocIndex(null); }}
+          selectedTitle={selectedTitle}
+          availableTimeScopes={availableTimeScopes}
+          isGraphLoading={loading || isSwitchingScope}
+          currentIndex={openDocIndex ?? undefined}
+          totalCount={openDocIndex !== null ? navRelationships.length : undefined}
+          onPrev={
+            openDocIndex !== null && openDocIndex > 0
+              ? () => {
+                  const prevIdx = openDocIndex - 1;
+                  const rel = navRelationships[prevIdx];
+                  const id = getOtherNodeId(rel, selectedNodeId!);
+                  if (!id) return;
+                  setOpenDocId(id);
+                  setOpenDocIndex(prevIdx);
+                }
+              : openDocIndex === 0
+              ? () => {
+                  setOpenDocId(`index:${selectedNodeId!.replace('index:', '')}`);
+                  setOpenDocIndex(-1);
+                }
+              : undefined
           }
-        : openDocIndex === 0
-        ? () => {
-            setOpenDocId(`index:${selectedNodeId!.replace('index:', '')}`);
-            setOpenDocIndex(-1);
+          onNext={
+            openDocIndex !== null && (openDocIndex === -1 || openDocIndex < navRelationships.length - 1)
+              ? () => {
+                  const nextIdx = openDocIndex === -1 ? 0 : openDocIndex + 1;
+                  const rel = navRelationships[nextIdx];
+                  const id = getOtherNodeId(rel, selectedNodeId!);
+                  if (!id) return;
+                  setOpenDocId(id);
+                  setOpenDocIndex(nextIdx);
+                }
+              : undefined
           }
-        : undefined
-    }
-    onNext={
-      openDocIndex !== null && (openDocIndex === -1 || openDocIndex < navRelationships.length - 1)
-        ? () => {
-            const nextIdx = openDocIndex === -1 ? 0 : openDocIndex + 1;
-            const rel = navRelationships[nextIdx];
-            const id = getOtherNodeId(rel, selectedNodeId!);
-            if (!id) return;
-            setOpenDocId(id);
-            setOpenDocIndex(nextIdx);
-          }
-        : undefined
-    }
-  />
-)}
-
+        />
+      )}
     </>
   );
 }

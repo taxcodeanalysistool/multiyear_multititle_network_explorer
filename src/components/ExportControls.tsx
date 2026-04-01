@@ -51,6 +51,9 @@ export default function ExportControls({
     setIsExporting(true);
 
     try {
+
+console.log('Node keys:', Object.keys(effectiveNodes[0]));
+console.log('Sample node:', JSON.stringify(effectiveNodes[0], null, 2));
       const metadata = {
         year: timeScope,
         title: `Title ${selectedTitle}`,

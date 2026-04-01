@@ -678,7 +678,7 @@ const handleKeywordSubmit = (e?: React.FormEvent) => {
                     value={localKeywords}
                     onChange={(e) => { setLocalKeywords(e.target.value); setRegexError(null); }}
                     onKeyPress={(e) => e.key === 'Enter' && handleKeywordSubmit()}
-                    placeholder={useRegex ? 'e.g. tax|income|\\bsec\\.' : 'tax, income, penalty'}
+                    placeholder={useRegex ? 'e.g. tax|income|\\bsec\\.' : 'tax, income, "price index"'}
                     className={`flex-1 px-3 py-2 bg-gray-700 border rounded-lg text-sm text-gray-100 
                       placeholder-gray-400 focus:outline-none focus:border-blue-500 ${
                       regexError ? 'border-red-500' : 'border-gray-600'
@@ -696,8 +696,10 @@ const handleKeywordSubmit = (e?: React.FormEvent) => {
                   <p className="text-xs text-red-400 mt-1">{regexError}</p>
                 ) : (
                   <p className="text-xs text-gray-500 mt-1">
-                    {useRegex ? 'Single regex pattern (e.g. tax|income)' : 'Comma-separated keywords'}
-                  </p>
+  {useRegex
+    ? 'Single regex pattern (e.g. tax|income)'
+    : 'Keywords separated by commas; use "quotes" for exact phrases'}
+</p>
                 )}
               </form>
             </>

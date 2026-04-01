@@ -20,6 +20,9 @@ import type {
 let cachedGraphs: Map<string, GraphData> = new Map();
 let cachedManifest: Manifest | null = null;
 
+// Deduplication map for in-flight loadGraph calls
+const pendingLoads: Map<string, Promise<GraphData>> = new Map();
+
 // Helper to create cache key
 const cacheKey = (title: string, timeScope: TimeScope) => `${title}::${timeScope}`;
 
@@ -44,7 +47,6 @@ export async function loadManifest(): Promise<Manifest> {
 // ==============================
 // Core Fetch Helper
 // ==============================
-// REPLACE the existing fetchJson function with this:
 async function fetchJson<T>(relPath: string): Promise<T> {
   const res = await fetch(`${import.meta.env.BASE_URL}${relPath}`);
   if (!res.ok) throw new Error(`Failed to fetch: ${relPath} (${res.status})`);
@@ -55,31 +57,29 @@ async function fetchJson<T>(relPath: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-
 // ==============================
 // Load Raw Graph
 // ==============================
 async function loadRawGraph(title: string, timeScope: TimeScope): Promise<RawGraph> {
   const base = import.meta.env.BASE_URL;
-  const metaFilename = `title-${title}-time-${timeScope}.meta.json`;
-  const singleFilename = `title-${title}-time-${timeScope}.json`;
 
-  // Check for split meta — must verify content-type to avoid SPA HTML fallback
-  const metaRes = await fetch(`${base}${metaFilename}`);
-  const metaContentType = metaRes.headers.get('content-type') || '';
-  const isSplit = metaRes.ok && !metaContentType.includes('text/html');
+  // Check manifest to see if this title uses split files
+  const manifest = await loadManifest();
+  const titleEntry = manifest.titles.find(t => t.id === title);
+  const isSplit = titleEntry?.split === true;
 
-if (isSplit) {
-    const meta = await metaRes.json() as {
+  if (isSplit) {
+    const metaFilename = `title-${title}-time-${timeScope}.meta.json`;
+    const meta = await fetchJson<{
       parts: { file: string; nodes: number; links: number }[];
-    };
+    }>(metaFilename);
 
     const parts = await Promise.all(
       meta.parts.map((part) => fetchJson<RawGraph>(part.file))
     );
 
     const nodeMap = new Map<string, any>();
-    const linkSet = new Set<string>();        // ← new
+    const linkSet = new Set<string>();
     const allLinks: any[] = [];
 
     for (const part of parts) {
@@ -90,7 +90,7 @@ if (isSplit) {
         const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
         const targetId = typeof link.target === 'string' ? link.target : link.target.id;
         const key = `${sourceId}→${targetId}::${link.edge_type ?? ''}`;
-        if (!linkSet.has(key)) {             // ← deduplicate
+        if (!linkSet.has(key)) {
           linkSet.add(key);
           allLinks.push(link);
         }
@@ -100,13 +100,10 @@ if (isSplit) {
     return { nodes: Array.from(nodeMap.values()), links: allLinks };
   }
 
-
-  // Single file — fetchJson already guards against HTML responses
+  // Single file
+  const singleFilename = `title-${title}-time-${timeScope}.json`;
   return await fetchJson<RawGraph>(singleFilename);
 }
-
-
-
 
 // ==============================
 // Cache Helper (MODIFIED - now async and loads on-demand)
@@ -121,7 +118,7 @@ async function getGraphOrThrow(title: string, timeScope: TimeScope): Promise<Gra
   const key = cacheKey(title, timeScope);
   let graph = cachedGraphs.get(key);
   
-  // If not cached, load it now
+  // If not cached, load it now (deduplication handled inside loadGraph)
   if (!graph) {
     console.log(`Graph not in cache for Title ${title}, Time ${timeScope}. Loading now...`);
     graph = await loadGraph(title, timeScope);
@@ -135,105 +132,116 @@ async function getGraphOrThrow(title: string, timeScope: TimeScope): Promise<Gra
 }
 
 // ==============================
-// Main Graph Loader
+// Main Graph Loader (with deduplication)
 // ==============================
 export async function loadGraph(title: string, timeScope: TimeScope): Promise<GraphData> {
   const key = cacheKey(title, timeScope);
-  
-  // Return from cache if already loaded
+
+  // 1. Already cached — return immediately
   if (cachedGraphs.has(key)) {
     return cachedGraphs.get(key)!;
   }
 
-  const raw = await loadRawGraph(title, timeScope);
+  // 2. Already in flight — piggyback on the existing promise
+  if (pendingLoads.has(key)) {
+    return pendingLoads.get(key)!;
+  }
 
-  // Calculate degree for node sizing
-  const degreeMap = new Map<string, number>();
-  raw.links.forEach((link) => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    degreeMap.set(sourceId, (degreeMap.get(sourceId) || 0) + 1);
-    degreeMap.set(targetId, (degreeMap.get(targetId) || 0) + 1);
-  });
+  // 3. First caller — start the real load
+  const loadPromise = (async () => {
+    try {
+      const raw = await loadRawGraph(title, timeScope);
 
-  const nodes: GraphNode[] = raw.nodes.map((n) => {
-    const degree = degreeMap.get(n.id) || 0;
+      // Calculate degree for node sizing
+      const degreeMap = new Map<string, number>();
+      raw.links.forEach((link) => {
+        const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+        degreeMap.set(sourceId, (degreeMap.get(sourceId) || 0) + 1);
+        degreeMap.set(targetId, (degreeMap.get(targetId) || 0) + 1);
+      });
 
-    let baseColor: string;
-    if (n.node_type === 'section' || n.node_type === 'index') {
-      baseColor = '#41378F';
-    } else if (n.node_type === 'entity' || n.node_type === 'concept') {
-      baseColor = '#F0A734';
-    } else {
-      baseColor = '#AFBBE8';
+      const nodes: GraphNode[] = raw.nodes.map((n) => {
+        const degree = degreeMap.get(n.id) || 0;
+
+        let baseColor: string;
+        if (n.node_type === 'section' || n.node_type === 'index') {
+          baseColor = '#41378F';
+        } else if (n.node_type === 'entity' || n.node_type === 'concept') {
+          baseColor = '#F0A734';
+        } else {
+          baseColor = '#AFBBE8';
+        }
+
+        return {
+          id: n.id,
+          name: n.name,
+          node_type: n.node_type,
+          time: n.time,
+          usc_title: n.title,
+          source_title: n.title,
+          val: degree,
+          totalVal: degree,
+          display_label: n.display_label,
+          properties: n.properties,
+          
+          // Hierarchy fields
+          title: n.title,
+          subtitle: n.subtitle,
+          part: n.part,
+          chapter: n.chapter,
+          subchapter: n.subchapter,
+          section: n.section,
+          subsection: n.subsection,
+          
+          // Legacy fields
+          full_name: n.full_name,
+          text: n.text ?? n.properties?.text,
+          term_type: n.term_type,
+          section_text: n.text ?? n.properties?.text,
+          
+          // Visual properties
+          color: baseColor,
+          baseColor,
+        };
+      });
+
+      const links: GraphLink[] = raw.links.map((l) => {
+        const edgeType = l.edge_type ?? 'reference';
+        return {
+          source: l.source,
+          target: l.target,
+          action: l.action || edgeType,
+          edge_type: edgeType,
+          time: l.time,
+          usc_title: l.title,
+          source_title: l.title,
+          weight: l.weight ?? 1,
+          definition: l.definition,
+          location: l.location,
+          timestamp: l.timestamp,
+        };
+      });
+
+      const titleNodePattern = new RegExp(`^term:title-`, 'i');
+      const filteredNodes = nodes.filter((n) => !titleNodePattern.test(n.id));
+      const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+      const filteredLinks = links.filter((l) => {
+        const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
+        const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
+        return filteredNodeIds.has(s) && filteredNodeIds.has(t);
+      });
+
+      const graphData = { nodes: filteredNodes, links: filteredLinks };
+      cachedGraphs.set(key, graphData);
+      return graphData;
+    } finally {
+      pendingLoads.delete(key);
     }
+  })();
 
-    return {
-      id: n.id,
-      name: n.name,
-      node_type: n.node_type,
-      time: n.time,
-      usc_title: n.title,
-      source_title: n.title,
-      val: degree,
-      totalVal: degree,
-      display_label: n.display_label,
-      properties: n.properties,
-      
-      // Hierarchy fields
-      title: n.title,
-      subtitle: n.subtitle,
-      part: n.part,
-      chapter: n.chapter,
-      subchapter: n.subchapter,
-      section: n.section,
-      subsection: n.subsection,
-      
-      // Legacy fields
-      full_name: n.full_name,
-      text: n.text ?? n.properties?.text,
-      term_type: n.term_type,
-      section_text: n.text ?? n.properties?.text,
-      
-      // Visual properties
-      color: baseColor,
-      baseColor,
-    };
-  });
-
-  const links: GraphLink[] = raw.links.map((l) => {
-    const edgeType = l.edge_type ?? 'reference';
-    return {
-      source: l.source,
-      target: l.target,
-      action: l.action || edgeType,
-      edge_type: edgeType,
-      time: l.time,
-      usc_title: l.title,
-      source_title: l.title,
-      weight: l.weight ?? 1,
-      definition: l.definition,
-      location: l.location,
-      timestamp: l.timestamp,
-    };
-  });
-
-const titleNodePattern = new RegExp(`^term:title-`, 'i');
-
-const filteredNodes = nodes.filter((n) => !titleNodePattern.test(n.id));
-
-// Also remove any links that referenced the filtered nodes
-const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-const filteredLinks = links.filter((l) => {
-  const s = typeof l.source === 'string' ? l.source : (l.source as any).id;
-  const t = typeof l.target === 'string' ? l.target : (l.target as any).id;
-  return filteredNodeIds.has(s) && filteredNodeIds.has(t);
-});
-
-const graphData = { nodes: filteredNodes, links: filteredLinks };
-  cachedGraphs.set(key, graphData);
-  
-  return graphData;
+  pendingLoads.set(key, loadPromise);
+  return loadPromise;
 }
 
 // ==============================
@@ -336,7 +344,7 @@ export async function fetchActorRelationships(
   maxHops: number | null,
   title: string,
   timeScope: TimeScope,
-  enabledNodeTypes?: string[]  // ← ADD this parameter
+  enabledNodeTypes?: string[]
 ): Promise<{ relationships: Relationship[]; totalBeforeFilter: number }> {
   const graph = await getGraphOrThrow(title, timeScope);
 
@@ -362,21 +370,20 @@ export async function fetchActorRelationships(
   }
 
   // Apply node type filters
-if (enabledNodeTypes && enabledNodeTypes.length > 0 && enabledNodeTypes.length < 3) {
-  relatedLinks = relatedLinks.filter((link) => {
-    const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-    const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-    
-    const sourceNode = nodeMap.get(scopedKey(timeScope, String(sourceId)));
-    const targetNode = nodeMap.get(scopedKey(timeScope, String(targetId)));
-    
-    const actorEnabled = sourceNode?.node_type && enabledNodeTypes.includes(sourceNode.node_type);
-    const targetEnabled = targetNode?.node_type && enabledNodeTypes.includes(targetNode.node_type);
-    
-    // Include ONLY if BOTH actor AND target match enabled types
-    return actorEnabled && targetEnabled;  // ← Changed from || to &&
-  });
-}
+  if (enabledNodeTypes && enabledNodeTypes.length > 0 && enabledNodeTypes.length < 3) {
+    relatedLinks = relatedLinks.filter((link) => {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      
+      const sourceNode = nodeMap.get(scopedKey(timeScope, String(sourceId)));
+      const targetNode = nodeMap.get(scopedKey(timeScope, String(targetId)));
+      
+      const actorEnabled = sourceNode?.node_type && enabledNodeTypes.includes(sourceNode.node_type);
+      const targetEnabled = targetNode?.node_type && enabledNodeTypes.includes(targetNode.node_type);
+      
+      return actorEnabled && targetEnabled;
+    });
+  }
 
   // Convert to relationships
   const relationships: Relationship[] = relatedLinks.map((link, idx) => {
@@ -411,8 +418,6 @@ if (enabledNodeTypes && enabledNodeTypes.length > 0 && enabledNodeTypes.length <
     totalBeforeFilter,
   };
 }
-
-
 
 // ==============================
 // Node Relationships
@@ -452,7 +457,6 @@ export async function fetchActorCounts(
 ): Promise<Record<string, number>> {
   ensureGraphLoadedOrThrow();
 
-  // If specific title/time, use that graph, otherwise use first cached graph
   let graph: GraphData;
   if (title && timeScope) {
     graph = await getGraphOrThrow(title, timeScope);
@@ -521,18 +525,15 @@ export async function searchActors(
       node_type: node.node_type,
     }))
     .sort((a, b) => {
-      // Exact matches first
       const aExact = a.name.toLowerCase().startsWith(lowerQuery) ? 0 : 1;
       const bExact = b.name.toLowerCase().startsWith(lowerQuery) ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
-      // Then by connection count descending
       return b.connection_count - a.connection_count;
     })
-    .slice(0, 30); // ← increased from 20
+    .slice(0, 30);
 
   return matches;
 }
-
 
 // ==============================
 // Fetch Document

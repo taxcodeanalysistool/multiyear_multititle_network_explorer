@@ -1,6 +1,7 @@
 // src/services/networkBuilder.ts
 
 import type { GraphNode, GraphLink, NetworkBuilderState, FilteredGraph } from '../types';
+import { parseSearchQuery } from '../utils/parseSearchQuery';
 
 export class NetworkBuilder {
   private allNodes: GraphNode[];
@@ -10,23 +11,22 @@ export class NetworkBuilder {
   constructor(nodes: GraphNode[], links: GraphLink[]) {
     this.allNodes = nodes;
     this.allLinks = links;
-    
+
     this.adjacencyMap = new Map();
-    
+
     links.forEach(link => {
       const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
       const targetId = typeof link.target === 'string' ? link.target : link.target.id;
       const edgeType = link.edge_type;
-      
+
       if (!this.adjacencyMap.has(sourceId)) this.adjacencyMap.set(sourceId, []);
       if (!this.adjacencyMap.has(targetId)) this.adjacencyMap.set(targetId, []);
-      
+
       this.adjacencyMap.get(sourceId)!.push({ neighborId: targetId, edgeType });
       this.adjacencyMap.get(targetId)!.push({ neighborId: sourceId, edgeType });
     });
   }
 
-  // ← CHANGED: added useRegex param; pre-compiles patterns once before iterating nodes
   searchNodes(
     searchTerms: string[],
     searchFields: string[],
@@ -35,86 +35,124 @@ export class NetworkBuilder {
   ): Set<string> {
     const matchedIds = new Set<string>();
 
-    // For plain text: normalize to lowercase for case-insensitive includes().
-    // For regex: keep original — case insensitivity is handled by the 'i' flag.
-    const normalizedTerms = useRegex
-      ? searchTerms.map(t => t.trim())
-      : searchTerms.map(t => t.toLowerCase().trim());
+    if (useRegex) {
+      // ── Regex mode: unchanged — each term is a raw regex pattern ──────────
+      const normalizedTerms = searchTerms.map(t => t.trim());
+      const regexPatterns: (RegExp | null)[] = normalizedTerms.map(term => {
+        try { return new RegExp(term, 'i'); } catch { return null; }
+      });
 
-    // Pre-compile regex patterns once (not once per node) for performance.
-    // Invalid patterns are silently dropped — validation already happened in Sidebar.
-    const regexPatterns: (RegExp | null)[] = useRegex
-      ? normalizedTerms.map(term => {
-          try { return new RegExp(term, 'i'); }
-          catch { return null; }
-        })
-      : [];
-
-    // Unified matcher: returns true if the term matches any searchable value
-    const termMatches = (termIdx: number, searchableValues: string[]): boolean => {
-      if (useRegex) {
+      const termMatches = (termIdx: number, searchableValues: string[]): boolean => {
         const re = regexPatterns[termIdx];
         return re ? searchableValues.some(v => re.test(v)) : false;
-      }
-      const term = normalizedTerms[termIdx];
-      return searchableValues.some(v => v.includes(term));
-    };
+      };
 
-    this.allNodes.forEach(node => {
-      const searchableValues: string[] = [];
-
-      searchFields.forEach(field => {
-        let value: any;
-
-        switch (field) {
-          case 'text':
-            value = node.properties?.text || node.text || node.section_text || node.index_heading;
-            break;
-          case 'full_name':
-            value = node.properties?.full_name || node.full_name;
-            break;
-          case 'display_label':
-            value = node.display_label;
-            break;
-          case 'definition':
-            value = node.properties?.definition;
-            break;
-          case 'entity':
-            value = node.node_type === 'entity' ? node.name : null;
-            break;
-          case 'concept':
-            value = node.node_type === 'concept' ? node.name : null;
-            break;
-          case 'properties':
-            if (node.properties && typeof node.properties === 'object') {
-              Object.values(node.properties).forEach(propValue => {
-                if (typeof propValue === 'string') {
-                  // Respect useRegex: skip lowercasing when regex mode is on
-                  searchableValues.push(useRegex ? propValue : propValue.toLowerCase());
-                }
-              });
-            }
-            return;
-          default:
-            value = (node as any)[field];
-        }
-
-        if (value !== null && value !== undefined) {
-          // Respect useRegex: skip lowercasing when regex mode is on
-          searchableValues.push(useRegex ? String(value) : String(value).toLowerCase());
+      this.allNodes.forEach(node => {
+        const searchableValues = this.getSearchableValues(node, searchFields, true);
+        if (logic === 'OR') {
+          if (normalizedTerms.some((_, idx) => termMatches(idx, searchableValues)))
+            matchedIds.add(node.id);
+        } else {
+          if (normalizedTerms.every((_, idx) => termMatches(idx, searchableValues)))
+            matchedIds.add(node.id);
         }
       });
 
-      if (logic === 'OR') {
-        const shouldMatch = normalizedTerms.some((_, idx) => termMatches(idx, searchableValues));
-        if (shouldMatch) matchedIds.add(node.id);
-      } else {
-        const allMatch = normalizedTerms.every((_, idx) => termMatches(idx, searchableValues));
-        if (allMatch) matchedIds.add(node.id);
-      }
+      return matchedIds;
+    }
+
+    // ── Plain text mode: parse quoted phrases vs. individual keywords ────────
+    //
+    // searchTerms here is the raw comma-separated string joined back, OR
+    // individual terms already split. We re-parse from the original input
+    // to correctly extract "quoted phrases" vs keywords.
+    //
+    // Since searchTerms arrives as an array (already split in App.tsx),
+    // we reconstruct the original string to run parseSearchQuery on it.
+    // Quoted phrases arrive with their quotes intact (e.g. ['"consumer price index"', 'tax']).
+    const rawInput = searchTerms.join(', ');
+    const { phrases, keywords } = parseSearchQuery(rawInput);
+
+    // Phrases: exact substring match (case-insensitive)
+    const lowerPhrases = phrases.map(p => p.toLowerCase());
+    // Keywords: individual substring match (case-insensitive)
+    const lowerKeywords = keywords.map(k => k.toLowerCase());
+
+    // Combined list of matchers — each is { type, value }
+    type Matcher = { type: 'phrase' | 'keyword'; value: string };
+    const matchers: Matcher[] = [
+      ...lowerPhrases.map(p  => ({ type: 'phrase'  as const, value: p })),
+      ...lowerKeywords.map(k => ({ type: 'keyword' as const, value: k })),
+    ];
+
+    if (matchers.length === 0) return matchedIds;
+
+    const matcherMatches = (matcher: Matcher, searchableValues: string[]): boolean => {
+      // Both phrase and keyword use includes() — the difference is that a phrase
+      // is a multi-word string so includes() naturally enforces contiguous matching.
+      return searchableValues.some(v => v.includes(matcher.value));
+    };
+
+    this.allNodes.forEach(node => {
+      const searchableValues = this.getSearchableValues(node, searchFields, false);
+
+      const matched = logic === 'OR'
+        ? matchers.some(m  => matcherMatches(m, searchableValues))
+        : matchers.every(m => matcherMatches(m, searchableValues));
+
+      if (matched) matchedIds.add(node.id);
     });
 
     return matchedIds;
+  }
+
+  // ── Extracted helper: build the list of searchable string values for a node ─
+  private getSearchableValues(
+    node: GraphNode,
+    searchFields: string[],
+    preserveCase: boolean
+  ): string[] {
+    const values: string[] = [];
+
+    const add = (v: any) => {
+      if (v !== null && v !== undefined) {
+        values.push(preserveCase ? String(v) : String(v).toLowerCase());
+      }
+    };
+
+    searchFields.forEach(field => {
+      switch (field) {
+        case 'text':
+          add(node.properties?.text || node.text || node.section_text || node.index_heading);
+          break;
+        case 'full_name':
+          add(node.properties?.full_name || node.full_name);
+          break;
+        case 'display_label':
+          add(node.display_label);
+          break;
+        case 'definition':
+          add(node.properties?.definition);
+          break;
+        case 'entity':
+          if (node.node_type === 'entity') add(node.name);
+          break;
+        case 'concept':
+          if (node.node_type === 'concept') add(node.name);
+          break;
+        case 'properties':
+          if (node.properties && typeof node.properties === 'object') {
+            Object.values(node.properties).forEach(propValue => {
+              if (typeof propValue === 'string') add(propValue);
+            });
+          }
+          break;
+        default:
+          add((node as any)[field]);
+      }
+    });
+
+    return values;
   }
 
   expandFromSeeds(
@@ -131,11 +169,11 @@ export class NetworkBuilder {
 
       currentLayer.forEach(nodeId => {
         const neighbors = this.adjacencyMap.get(nodeId) || [];
-        
+
         const filteredNeighbors = allowedEdgeTypes.length > 0
           ? neighbors.filter(n => allowedEdgeTypes.includes(n.edgeType))
           : neighbors;
-        
+
         const limitedNeighbors = maxNeighborsPerNode > 0
           ? filteredNeighbors.slice(0, maxNeighborsPerNode)
           : filteredNeighbors;
@@ -155,7 +193,6 @@ export class NetworkBuilder {
     return expanded;
   }
 
-  // ← CHANGED: added useRegex as 4th param, passed through to searchNodes
   buildNetwork(
     state: NetworkBuilderState,
     searchLogic: 'AND' | 'OR' = 'OR',
@@ -173,7 +210,6 @@ export class NetworkBuilder {
         return { nodes: [], links: [], truncated: false, matchedCount: 0 };
       }
 
-      // Step 1b: Expand from seeds
       if (state.expansionDepth > 0) {
         candidateNodeIds = this.expandFromSeeds(
           seedNodeIds,
@@ -270,7 +306,6 @@ export class NetworkBuilder {
     if (truncated) {
       if (nodeRankingMode === 'subgraph') {
         const nodeDegrees = new Map<string, number>();
-
         candidateLinks.forEach(link => {
           const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
           const targetId = typeof link.target === 'string' ? link.target : link.target.id;
@@ -312,7 +347,6 @@ export class NetworkBuilder {
       .map(link => {
         const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
         const targetId = typeof link.target === 'string' ? link.target : link.target.id;
-
         return {
           source: sourceId,
           target: targetId,

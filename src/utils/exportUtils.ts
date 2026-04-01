@@ -5,6 +5,9 @@
 
 import type { GraphNode, GraphLink, TimeScope, SelectedNode } from '../types';
 
+// Maximum characters per CSV cell (Excel limit is 32,767)
+const MAX_CELL_LENGTH = 32000;
+
 interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
@@ -45,126 +48,129 @@ interface ImageMetadata {
 
 /**
  * Escapes and cleans a value for safe CSV output.
+ * Always wraps in double-quotes if the value contains commas, newlines, or double-quotes.
+ * Internal double-quotes are escaped by doubling them ("").
  */
 export function escapeCSVField(field: any): string {
   if (field === null || field === undefined) return '';
-  // Normalize internal newlines and tabs to a single space
-  const stringField = String(field).replace(/[\r\n\t]+/g, ' ').trim();
-  // Wrap in quotes if field contains a comma, double-quote, or was multi-line
-  if (stringField.includes(',') || stringField.includes('"')) {
-    return `"${stringField.replace(/"/g, '""')}"`;
+  const str = String(field);
+  if (
+    str.includes(',') ||
+    str.includes('\n') ||
+    str.includes('\r') ||
+    str.includes('"')
+  ) {
+    return '"' + str.replace(/"/g, '""') + '"';
   }
-  return stringField;
+  return str;
+}
+
+/**
+ * Normalizes a node field value before CSV escaping.
+ * - Strips ALL control characters (0x00–0x1F, 0x7F) and Unicode line terminators
+ * - Collapses whitespace
+ * - Truncates to MAX_CELL_LENGTH to prevent Excel overflow corruption
+ */
+function normalizeField(value: any, truncate = true): string {
+  if (value === null || value === undefined) return '';
+  
+  let str = String(value);
+  
+  // Strip ALL control characters (newlines, tabs, null bytes, etc.)
+  // and Unicode line/paragraph separators
+  str = str.replace(/[\x00-\x1F\x7F\u0085\u2028\u2029]/g, ' ');
+  
+  // Collapse multiple spaces into one
+  str = str.replace(/ {2,}/g, ' ').trim();
+  
+  // Truncate to prevent Excel cell overflow
+  if (truncate && str.length > MAX_CELL_LENGTH) {
+    str = str.slice(0, MAX_CELL_LENGTH) + '... [TRUNCATED]';
+  }
+  
+  return str;
 }
 
 /**
  * Converts nodes array to CSV string.
- * CLEAN FORMAT: Headers row, then data rows, then blank line + metadata section.
+ * CLEAN FORMAT: Headers row, then one data row per node.
+ * 
+ * NOTE: 'section_text' is omitted because it is always identical to 'text'.
+ * This halves row length for nodes with large statutory text.
  */
 export function nodesToCSV(nodes: GraphNode[], metadata: ExportMetadata = {}): string {
   if (!nodes || nodes.length === 0) {
     return 'No nodes to export';
   }
 
-  // Get all unique keys from nodes (for extensibility with future metrics)
-  const allKeys = new Set<string>();
-  nodes.forEach(node => {
-    Object.keys(node).forEach(key => allKeys.add(key));
-  });
-
-  // Reserve space for future metric columns (will be empty now)
-  const metricColumns = [
-    'degree',
-    'betweenness_centrality',
-    'closeness_centrality',
-    'eigenvector_centrality',
-    'pagerank',
-    'clustering_coefficient',
+  const headers = [
+    'id', 'name', 'node_type', 'time', 'usc_title', 'source_title',
+    'display_label', 'title', 'subtitle', 'part', 'chapter', 'subchapter',
+    'section', 'subsection', 'full_name', 'text', 'term_type',
+    'degree', 'betweenness_centrality', 'closeness_centrality',
+    'eigenvector_centrality', 'pagerank', 'clustering_coefficient',
   ];
 
-  const headers = [...Array.from(allKeys), ...metricColumns];
-  
-  // Start with clean header row
   let csv = headers.map(escapeCSVField).join(',') + '\n';
 
-  // Add data rows
   nodes.forEach(node => {
-    const row = headers.map(header => escapeCSVField((node as any)[header] ?? ''));
+    const row = headers.map(header => {
+      const raw = (node as any)[header] ?? '';
+      // Only truncate known long-text fields
+      const shouldTruncate = header === 'text' || header === 'section_text' || header === 'full_name';
+      const value = normalizeField(raw, shouldTruncate);
+      return escapeCSVField(value);
+    });
     csv += row.join(',') + '\n';
   });
-
-  // Add metadata section at the end (after blank line)
-  csv += '\n';
-  csv += '# METADATA\n';
-  if (metadata.year) csv += `# Year: ${metadata.year}\n`;
-  if (metadata.title) csv += `# Title: ${metadata.title}\n`;
-  if (metadata.filterTypes) csv += `# Filtered Types: ${metadata.filterTypes.join(', ')}\n`;
-  if (metadata.searchTerm) csv += `# Search Term: ${metadata.searchTerm}\n`;
-  csv += `# Export Date: ${new Date().toISOString()}\n`;
-  csv += `# Total Nodes: ${nodes.length}\n`;
 
   return csv;
 }
 
 /**
  * Converts links array to CSV string.
- * CLEAN FORMAT: Headers row, then data rows, then blank line + metadata section.
+ * CLEAN FORMAT: Headers row, then one data row per link.
  */
 export function linksToCSV(links: GraphLink[], metadata: ExportMetadata = {}): string {
   if (!links || links.length === 0) {
     return 'No links to export';
   }
 
-  // Get all unique keys from links
   const allKeys = new Set<string>();
   links.forEach(link => {
     Object.keys(link).forEach(key => allKeys.add(key));
   });
 
-  // Ensure source and target are first columns
   const headers = ['source', 'target', ...Array.from(allKeys).filter(k => k !== 'source' && k !== 'target')];
-  
-  // Start with clean header row
+
   let csv = headers.map(escapeCSVField).join(',') + '\n';
 
-  // Add data rows
   links.forEach(link => {
     const row = headers.map(header => {
       let value = (link as any)[header];
-      // Handle D3 object references (source/target might be objects)
       if (typeof value === 'object' && value !== null) {
         value = value.id ?? value.toString();
       }
-      return escapeCSVField(value ?? '');
+      return escapeCSVField(normalizeField(value ?? '', true));
     });
     csv += row.join(',') + '\n';
   });
-
-  // Add metadata section at the end (after blank line)
-  csv += '\n';
-  csv += '# METADATA\n';
-  if (metadata.year) csv += `# Year: ${metadata.year}\n`;
-  if (metadata.title) csv += `# Title: ${metadata.title}\n`;
-  csv += `# Export Date: ${new Date().toISOString()}\n`;
-  csv += `# Total Links: ${links.length}\n`;
 
   return csv;
 }
 
 /**
  * Converts nodes and links to combined edge list CSV.
- * CLEAN FORMAT: Headers row, then data rows, then blank line + metadata section.
+ * CLEAN FORMAT: Headers row, then one data row per edge.
  */
 export function toEdgeListCSV(nodes: GraphNode[], links: GraphLink[], metadata: ExportMetadata = {}): string {
   if (!links || links.length === 0) {
     return 'No links to export';
   }
 
-  // Create node lookup for attributes
   const nodeMap = new Map<string, GraphNode>();
   nodes.forEach(node => nodeMap.set(node.id, node));
 
-  // Headers: source info, target info, edge attributes
   const headers = [
     'source_id',
     'source_type',
@@ -175,11 +181,9 @@ export function toEdgeListCSV(nodes: GraphNode[], links: GraphLink[], metadata: 
     'edge_type',
     'action',
   ];
-  
-  // Start with clean header row
+
   let csv = headers.join(',') + '\n';
 
-  // Add data rows
   links.forEach(link => {
     const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
     const targetId = typeof link.target === 'string' ? link.target : link.target.id;
@@ -188,26 +192,17 @@ export function toEdgeListCSV(nodes: GraphNode[], links: GraphLink[], metadata: 
     const targetNode = nodeMap.get(targetId) || ({} as GraphNode);
 
     const row = [
-      escapeCSVField(sourceId),
-      escapeCSVField(sourceNode.node_type || ''),
-      escapeCSVField(sourceNode.name || ''),
-      escapeCSVField(targetId),
-      escapeCSVField(targetNode.node_type || ''),
-      escapeCSVField(targetNode.name || ''),
-      escapeCSVField(link.edge_type || ''),
-      escapeCSVField(link.action || ''),
+      escapeCSVField(normalizeField(sourceId, false)),
+      escapeCSVField(normalizeField(sourceNode.node_type || '', false)),
+      escapeCSVField(normalizeField(sourceNode.name || '', false)),
+      escapeCSVField(normalizeField(targetId, false)),
+      escapeCSVField(normalizeField(targetNode.node_type || '', false)),
+      escapeCSVField(normalizeField(targetNode.name || '', false)),
+      escapeCSVField(normalizeField(link.edge_type || '', false)),
+      escapeCSVField(normalizeField(link.action || '', false)),
     ];
     csv += row.join(',') + '\n';
   });
-
-  // Add metadata section at the end (after blank line)
-  csv += '\n';
-  csv += '# METADATA\n';
-  if (metadata.year) csv += `# Year: ${metadata.year}\n`;
-  if (metadata.title) csv += `# Title: ${metadata.title}\n`;
-  csv += `# Export Date: ${new Date().toISOString()}\n`;
-  csv += `# Format: Edge List with Node Attributes\n`;
-  csv += `# Total Edges: ${links.length}\n`;
 
   return csv;
 }
