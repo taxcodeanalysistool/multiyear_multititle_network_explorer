@@ -170,6 +170,14 @@
       "split": false
     },
     {
+      "id": "19",
+      "name": "Title 19",
+      "description": "U.S. Code Title 19",
+      "timeScopes": ["2025"],
+      "timeScopeType": "custom",
+      "split": false
+    },
+    {
       "id": "20",
       "name": "Title 20",
       "description": "U.S. Code Title 20",
