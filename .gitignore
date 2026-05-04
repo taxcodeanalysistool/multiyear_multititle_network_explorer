@@ -24,3 +24,4 @@ dist-ssr
 *.sw?
 dist/
 public/title-42.json
+public.zip
