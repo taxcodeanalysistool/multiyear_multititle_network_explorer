@@ -114,7 +114,7 @@ function App() {
   const [keywords, setKeywords] = useState('');
   const [actorTotalCounts, setActorTotalCounts] = useState<Record<string, number>>({});
   const [manifestLoaded, setManifestLoaded] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(() => !localStorage.getItem('hasSeenWelcome'));
+  const [showWelcome, setShowWelcome] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
   const [isSwitchingScope, setIsSwitchingScope] = useState(false);

@@ -338,7 +338,7 @@ const handleKeywordSubmit = (e?: React.FormEvent) => {
   '31': 'Money and Finance',
   '32': 'National Guard',
   '33': 'Navigation and Navigable Waters',
-  '34': 'Navy (repealed)',
+  '34': 'Crime Control and Law Enforcement',
   '35': 'Patents',
   '36': 'Patriotic and National Observances',
   '37': 'Pay and Allowances of the Uniformed Services',
