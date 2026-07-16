@@ -455,6 +455,8 @@ function App() {
           maxTotalNodes: params.maxNodes,
         };
 
+const seedNodeIds = builder.searchNodes(terms, params.searchFields, params.searchLogic, params.useRegex);
+
         const filtered = builder.buildNetwork(
           builderState,
           params.searchLogic,
@@ -501,7 +503,9 @@ function App() {
           nodesInFinalLinks.add(targetId);
         });
 
-        const finalNodes = filtered.nodes.filter((n) => nodesInFinalLinks.has(n.id));
+        const finalNodes = filtered.nodes.filter(
+  n => nodesInFinalLinks.has(n.id) || seedNodeIds.has(n.id)
+);
 
         setDisplayGraph({
           nodes: finalNodes,

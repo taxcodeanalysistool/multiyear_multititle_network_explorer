@@ -123,7 +123,10 @@ export class NetworkBuilder {
     searchFields.forEach(field => {
       switch (field) {
         case 'text':
-          add(node.properties?.text || node.text || node.section_text || node.index_heading);
+          add(node.properties?.text);
+          add(node.text);
+          add(node.section_text);
+          add(node.index_heading);
           break;
         case 'full_name':
           add(node.properties?.full_name || node.full_name);
@@ -290,10 +293,11 @@ export class NetworkBuilder {
     const connectedNodeIds = new Set(
       candidateNodes
         .filter(n => {
+          const isSeed = seedNodeIds.has(n.id);
           const hasEdges = nodesWithEdges.has(n.id);
           const typeMatch = state.allowedNodeTypes.length === 0 ||
                             state.allowedNodeTypes.includes(n.node_type);
-          return hasEdges && typeMatch;
+          return (isSeed || hasEdges) && typeMatch;
         })
         .map(n => n.id)
     );
@@ -313,14 +317,17 @@ export class NetworkBuilder {
           nodeDegrees.set(targetId, (nodeDegrees.get(targetId) || 0) + 1);
         });
 
-        const topNodes = Array.from(connectedNodeIds)
-          .filter(nodeId => nodeDegrees.has(nodeId))
-          .sort((a, b) => (nodeDegrees.get(b) || 0) - (nodeDegrees.get(a) || 0))
-          .slice(0, state.maxTotalNodes);
+        const seeds = Array.from(connectedNodeIds).filter(id => seedNodeIds.has(id));
+        const nonSeeds = Array.from(connectedNodeIds)
+          .filter(id => !seedNodeIds.has(id) && nodeDegrees.has(id))
+          .sort((a, b) => (nodeDegrees.get(b) || 0) - (nodeDegrees.get(a) || 0));
 
+        const topNodes = [...seeds, ...nonSeeds].slice(0, state.maxTotalNodes);
         finalNodeIds = new Set(topNodes);
       } else {
-        finalNodeIds = new Set(this.selectTopNodesByDegree(connectedNodeIds, state.maxTotalNodes));
+        finalNodeIds = new Set(
+          this.selectTopNodesByDegree(connectedNodeIds, state.maxTotalNodes, seedNodeIds)
+        );
       }
     } else {
       finalNodeIds = connectedNodeIds;
@@ -410,7 +417,11 @@ export class NetworkBuilder {
     return { nodes, links, truncated, matchedCount: totalMatches };
   }
 
-  private selectTopNodesByDegree(nodeIds: Set<string>, maxNodes: number): string[] {
+  private selectTopNodesByDegree(
+    nodeIds: Set<string>,
+    maxNodes: number,
+    seedNodeIds: Set<string>
+  ): string[] {
     const nodeDegrees = new Map<string, number>();
 
     nodeIds.forEach(nodeId => {
@@ -418,9 +429,11 @@ export class NetworkBuilder {
       nodeDegrees.set(nodeId, neighbors.length);
     });
 
-    return Array.from(nodeDegrees.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, maxNodes)
-      .map(([nodeId]) => nodeId);
+    const seeds = Array.from(nodeIds).filter(id => seedNodeIds.has(id));
+    const nonSeeds = Array.from(nodeIds)
+      .filter(id => !seedNodeIds.has(id))
+      .sort((a, b) => (nodeDegrees.get(b) || 0) - (nodeDegrees.get(a) || 0));
+
+    return [...seeds, ...nonSeeds].slice(0, maxNodes);
   }
 }
